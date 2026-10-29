@@ -118,3 +118,9 @@ test('disabling wipes the stored AI key', async () => {
   await r.dispatch('configure', { enabled: false, aiKey: 'k' });
   assert.equal(r.kv.get('bg_config'), JSON.stringify({ enabled: false }));
 });
+
+test('app calls the background runner by its native plugin id', () => {
+  const app = readFileSync(new URL('../www/js/app.js', import.meta.url), 'utf8');
+  assert.match(app, /RUNNER_PLUGIN = 'CapacitorBackgroundRunner'/);
+  assert.doesNotMatch(app, /nativePromise\('BackgroundRunner'/);
+});

@@ -137,6 +137,10 @@ async function refreshBalance() {
 
 // ---------------------------------------------------------------- background scanner
 const RUNNER_LABEL = 'ir.personal.nobitexmargin.scan';
+// Native plugin id registered by @capacitor/background-runner on Android
+// (@CapacitorPlugin(name = "CapacitorBackgroundRunner")). The config key in
+// capacitor.config.json is still "BackgroundRunner" — the two names differ.
+const RUNNER_PLUGIN = 'CapacitorBackgroundRunner';
 
 function nativeAvailable() {
   const C = window.Capacitor;
@@ -147,7 +151,7 @@ function nativeAvailable() {
 
 function runnerCall(method, options) {
   if (!nativeAvailable()) return Promise.reject(new Error('بررسی خودکار فقط در اپ اندروید کار می‌کند'));
-  return window.Capacitor.nativePromise('BackgroundRunner', method, options);
+  return window.Capacitor.nativePromise(RUNNER_PLUGIN, method, options);
 }
 
 function bgDispatch(event, details = {}) {
