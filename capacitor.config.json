@@ -1,0 +1,13 @@
+{
+  "appId": "ir.personal.nobitexmargin",
+  "appName": "دستیار تعهدی",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
