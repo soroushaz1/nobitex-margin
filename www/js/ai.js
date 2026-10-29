@@ -4,6 +4,10 @@
 
 import { candlesFromUdf, summarize } from './indicators.js';
 import { LIMITS } from './risk.js';
+import { spreads } from './market.js';
+import { sleep } from './util.js';
+
+const REQUEST_GAP_MS = 150; // be gentle with Nobitex rate limits
 
 const TIMEFRAMES = [
   { key: '15m', res: '15' },
@@ -12,14 +16,17 @@ const TIMEFRAMES = [
 ];
 
 /** Fetch candles and compute indicator summaries for each candidate market. */
-export async function buildSnapshot(api, candidates) {
+export async function buildSnapshot(api, candidates, spreadMap = {}, onProgress = () => {}) {
   const markets = [];
-  for (const c of candidates) {
+  for (let idx = 0; idx < candidates.length; idx++) {
+    const c = candidates[idx];
+    onProgress(idx + 1, candidates.length);
     const tfs = {};
     let atr15 = null;
     for (const tf of TIMEFRAMES) {
       try {
         const d = await api.ohlc(c.symbol, tf.res, 220);
+        await sleep(REQUEST_GAP_MS);
         const sum = summarize(candlesFromUdf(d));
         if (sum) {
           if (tf.key === '15m') atr15 = sum._atr;
@@ -37,6 +44,7 @@ export async function buildSnapshot(api, candidates) {
       long_allowed: c.buyEnabled,
       short_allowed: c.sellEnabled,
       volume_24h_billion_toman: Number((c.volume / 1e10).toFixed(1)),
+      spread_pct: spreadMap[c.symbol] !== undefined ? Number(spreadMap[c.symbol].toFixed(3)) : null,
       timeframes: tfs,
       _price: c.price,
       _atr15: atr15,
@@ -54,6 +62,7 @@ export function systemPrompt() {
     '- "no_trade" is a valid and frequently correct answer. Choose it when signals conflict, the trend is unclear, or volatility is extreme.',
     '- Prefer trading WITH the higher-timeframe (4h/1h) trend; avoid shorting strong uptrends and longing strong downtrends.',
     '- Only use markets from the list, and only sides marked as allowed.',
+    `- Avoid markets with spread_pct above ${LIMITS.MAX_SPREAD_PCT}; smaller, low-volume coins move erratically, so demand a cleaner setup there.`,
     `- stop_loss_pct must be between ${LIMITS.MIN_STOP_PCT} and ${LIMITS.MAX_STOP_PCT}, placed beyond normal noise (consider atr14_pct on 15m and 1h).`,
     `- take_profit_pct must be at least ${LIMITS.MIN_REWARD_RISK} x stop_loss_pct and realistic versus recent ranges (dist_to_50c_high/low).`,
     '- Percentages are distances from the current price.',
@@ -142,4 +151,29 @@ export async function askModel({ baseUrl, apiKey, model, fetchFn }, system, user
   }
   const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
   return extractJson(content);
+}
+
+/**
+ * Full analysis pipeline shared by the app and the background runner.
+ * ai: { baseUrl, apiKey, model, fetchFn? }
+ */
+export async function runAnalysis(api, market, ai, n, onProgress = () => {}) {
+  onProgress('markets');
+  await market.load();
+  const cands = market.candidates(n);
+  if (!cands.length) throw new Error('بازار تعهدی فعالی با حجم کافی پیدا نشد');
+  const sp = await spreads(api);
+  const snapshot = await buildSnapshot(api, cands, sp, (i, total) => onProgress('candles', i, total));
+  if (!snapshot.length) throw new Error('داده کندل دریافت نشد');
+  onProgress('ai');
+  const raw = await askModel(ai, systemPrompt(), userPrompt(snapshot));
+  const idea = normalizeIdea(raw, snapshot);
+  const m = snapshot.find((x) => x.symbol === idea.symbol);
+  return {
+    idea,
+    scanned: snapshot.length,
+    price: m ? m._price : null,
+    spreadPct: m ? m.spread_pct : null,
+    warnings: market.warnings.slice(),
+  };
 }

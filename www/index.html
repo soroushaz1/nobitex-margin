@@ -78,7 +78,18 @@
         <label>آدرس سرویس (سازگار با OpenAI)<input id="s-ai-url" dir="ltr" placeholder="https://.../v1" /></label>
         <label>نام مدل<input id="s-ai-model" dir="ltr" placeholder="model name" /></label>
         <label>کلید سرویس<input id="s-ai-key" dir="ltr" type="password" placeholder="sk-..." /></label>
+        <label>تعداد بازارهای بررسی‌شده (۳ تا ۱۵)<input id="s-cands" type="number" min="3" max="15" step="1" /></label>
+        <p class="muted small">بازارهای کم‌حجم (زیر حدود ۱ میلیارد تومان معامله روزانه) و بازارهای با اختلاف قیمت خرید و فروش زیاد خودکار کنار گذاشته می‌شوند.</p>
         <button id="test-ai" class="btn ghost">آزمایش اتصال</button>
+      </div>
+
+      <h2>بررسی خودکار</h2>
+      <div class="card">
+        <label class="check"><input type="checkbox" id="bg-enabled" /> هر حدود ۱۵ دقیقه بازار را بررسی کن و اگر فرصت خوبی بود اعلان بده</label>
+        <p class="muted small">فقط اعلان می‌دهد؛ ثبت سفارش همیشه با تایید خود شماست. بررسی پس‌زمینه فقط از داده‌های عمومی بازار و هوش مصنوعی استفاده می‌کند و به کلید نوبیتکس دسترسی ندارد.</p>
+        <p class="muted small">در گوشی‌های سامسونگ: تنظیمات ← برنامه‌ها ← دستیار تعهدی ← باتری ← «بدون محدودیت»، وگرنه اندروید بررسی‌ها را متوقف می‌کند.</p>
+        <p id="bg-status" class="small"></p>
+        <button id="bg-run" class="btn ghost small">یک بار همین الان بررسی کن</button>
       </div>
 
       <h2>کلید API نوبیتکس</h2>

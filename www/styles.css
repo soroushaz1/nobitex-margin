@@ -138,3 +138,7 @@ ul.reasons { margin: 6px 0 0; padding-right: 18px; }
 .toast.bad { border-color: var(--short); }
 .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: s 0.8s linear infinite; vertical-align: middle; margin-left: 6px; }
 @keyframes s { to { transform: rotate(360deg); } }
+
+label.check { display: flex; align-items: flex-start; gap: 10px; color: var(--text); font-size: 15px; }
+label.check input { display: inline-block; width: 22px; height: 22px; margin: 4px 0 0; flex: none; accent-color: var(--accent); }
+.src { font-size: 12px; color: var(--accent); }

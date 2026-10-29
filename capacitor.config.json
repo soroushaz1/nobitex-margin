@@ -8,6 +8,14 @@
   "plugins": {
     "CapacitorHttp": {
       "enabled": true
+    },
+    "BackgroundRunner": {
+      "label": "ir.personal.nobitexmargin.scan",
+      "src": "runners/background.js",
+      "event": "checkMarket",
+      "repeat": true,
+      "interval": 15,
+      "autoStart": true
     }
   }
 }

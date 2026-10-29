@@ -4,18 +4,11 @@
 
 import { boundedMarketPrice } from './risk.js';
 import { floorToStep, sleep } from './util.js';
-
-function bestPrices(book) {
-  const asks = book.asks || [];
-  const bids = book.bids || [];
-  const ask = asks.length ? Number(asks[0][0]) : NaN;
-  const bid = bids.length ? Number(bids[0][0]) : NaN;
-  return { ask, bid };
-}
+import { bestOf } from './market.js';
 
 export async function currentBest(api, symbol) {
   const book = await api.orderbook(symbol);
-  const { ask, bid } = bestPrices(book);
+  const { ask, bid } = bestOf(book);
   if (!(ask > 0 && bid > 0)) throw new Error('دفتر سفارش خالی است');
   return { ask, bid, last: Number(book.lastTradePrice) || (ask + bid) / 2 };
 }

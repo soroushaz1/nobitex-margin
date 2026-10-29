@@ -2,7 +2,7 @@
 
 import { Nobitex, parsePrivateKey } from './nobitex.js';
 import { MarketInfo } from './market.js';
-import { buildSnapshot, systemPrompt, userPrompt, askModel, normalizeIdea } from './ai.js';
+import { askModel, runAnalysis } from './ai.js';
 import { buildPlan, effectiveSettings } from './risk.js';
 import { candlesFromUdf } from './indicators.js';
 import { settlePaper, resultOf, stats, tradesToday } from './journal.js';
@@ -17,10 +17,17 @@ const $ = (id) => document.getElementById(id);
 const SUGGESTION_TTL_MS = 20 * 60 * 1000;
 const AUTO_LOCK_MS = 5 * 60 * 1000;
 
+const savedSettings = store.get('settings', {});
+// v2: wider scan by default (older installs saved 5 markets)
+if (!savedSettings.v) {
+  if (savedSettings.candidates === 5) savedSettings.candidates = 10;
+  savedSettings.v = 2;
+}
+
 const state = {
   pin: null,
   secrets: {},
-  settings: { ...DEFAULT_SETTINGS, ...store.get('settings', {}) },
+  settings: { ...DEFAULT_SETTINGS, ...savedSettings },
   journal: store.get('journal', []),
   api: null,
   market: null,
@@ -128,6 +135,148 @@ async function refreshBalance() {
   }
 }
 
+// ---------------------------------------------------------------- background scanner
+const RUNNER_LABEL = 'ir.personal.nobitexmargin.scan';
+
+function nativeAvailable() {
+  const C = window.Capacitor;
+  if (!C || typeof C.nativePromise !== 'function') return false;
+  const platform = typeof C.getPlatform === 'function' ? C.getPlatform() : C.platform;
+  return platform !== 'web';
+}
+
+function runnerCall(method, options) {
+  if (!nativeAvailable()) return Promise.reject(new Error('بررسی خودکار فقط در اپ اندروید کار می‌کند'));
+  return window.Capacitor.nativePromise('BackgroundRunner', method, options);
+}
+
+function bgDispatch(event, details = {}) {
+  return runnerCall('dispatchEvent', { label: RUNNER_LABEL, event, details });
+}
+
+function bgConfig(enabled) {
+  const s = state.settings;
+  return enabled
+    ? { enabled: true, aiBaseUrl: s.aiBaseUrl, aiModel: s.aiModel, aiKey: state.secrets.aiKey, candidates: Number(s.candidates) || 10 }
+    : { enabled: false };
+}
+
+function fmtTime(ms) {
+  return new Date(ms).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
+}
+
+async function refreshBgStatus() {
+  const el = $('bg-status');
+  $('bg-enabled').checked = !!state.settings.bgEnabled;
+  if (!nativeAvailable()) {
+    el.textContent = 'در این محیط در دسترس نیست.';
+    return null;
+  }
+  try {
+    const r = await bgDispatch('getLatest');
+    const st = r && r.status;
+    if (!state.settings.bgEnabled) el.textContent = 'خاموش';
+    else if (!st) el.textContent = 'روشن — هنوز بررسی‌ای انجام نشده.';
+    else if (!st.ok) el.innerHTML = `<span class="neg">آخرین بررسی (${esc(fmtTime(st.at))}) ناموفق: ${esc(st.error)}</span>`;
+    else
+      el.textContent = `آخرین بررسی: ${fmtTime(st.at)} — ${toFaDigits(st.scanned || 0)} بازار — ${
+        st.decision === 'trade' ? 'یک فرصت پیدا شد' : 'فرصت مناسبی نبود'
+      }`;
+    return r;
+  } catch (e) {
+    el.textContent = 'وضعیت دریافت نشد: ' + e.message;
+    return null;
+  }
+}
+
+/** Show a recent background finding as the current suggestion (once). */
+async function checkBackgroundFinding() {
+  if (!state.settings.bgEnabled || !nativeAvailable() || state.busy) return;
+  try {
+    const r = await bgDispatch('getLatest');
+    const f = r && r.latest;
+    if (!f || !f.idea || f.idea.decision !== 'trade' || !f.price) return;
+    if (Date.now() - f.at > SUGGESTION_TTL_MS) return;
+    if (state.settings.bgSeenAt && f.at <= state.settings.bgSeenAt) return;
+    state.settings.bgSeenAt = f.at;
+    store.set('settings', state.settings);
+    state.busy = true;
+    await adoptIdea({ idea: f.idea, price: f.price, spreadPct: f.spreadPct, scanned: f.scanned, warnings: [] }, f.at, 'background');
+    state.busy = false;
+    showTab('suggest');
+    renderSuggestion();
+  } catch (e) {
+    state.busy = false;
+  }
+}
+
+async function toggleBackground(on) {
+  const box = $('bg-enabled');
+  if (!on) {
+    state.settings.bgEnabled = false;
+    store.set('settings', state.settings);
+    try {
+      await bgDispatch('configure', bgConfig(false));
+    } catch {
+      /* ignore */
+    }
+    refreshBgStatus();
+    return;
+  }
+  box.checked = false;
+  if (!nativeAvailable()) {
+    toast('بررسی خودکار فقط در اپ اندروید کار می‌کند', true);
+    return;
+  }
+  if (!state.settings.aiBaseUrl || !state.settings.aiModel || !state.secrets.aiKey) {
+    toast('ابتدا سرویس هوش مصنوعی را تنظیم و ذخیره کنید', true);
+    return;
+  }
+  const ok = await modal(
+    `<h2 style="margin-top:0;color:var(--text)">روشن کردن بررسی خودکار</h2>
+     <p>برنامه حدود هر ۱۵ دقیقه (زمان دقیق دست اندروید است) بازار را بررسی می‌کند و فقط وقتی فرصتی از قوانین ریسک رد شود، اعلان می‌دهد.</p>
+     <div class="note warn small">برای کار در پس‌زمینه، <b>کلید هوش مصنوعی</b> بدون رمز روی همین گوشی نگه داشته می‌شود (کلیدهای نوبیتکس رمزنگاری‌شده می‌مانند). با خاموش کردن، این کلید پاک می‌شود.</div>
+     <div class="note small">هر بررسی یک درخواست به سرویس هوش مصنوعی است؛ یعنی حدود ۹۶ درخواست در روز.</div>`,
+    { okText: 'روشن کن' },
+  );
+  if (!ok) return;
+  try {
+    const perm = await runnerCall('requestPermissions', { apis: ['notifications'] });
+    if (perm && perm.notifications && perm.notifications !== 'granted') {
+      toast('اجازه اعلان داده نشد؛ بدون آن پیدا شدن فرصت را نمی‌بینید', true);
+    }
+    await bgDispatch('configure', bgConfig(true));
+    state.settings.bgEnabled = true;
+    store.set('settings', state.settings);
+    box.checked = true;
+    toast('بررسی خودکار روشن شد ✓');
+  } catch (e) {
+    toast('روشن نشد: ' + e.message, true);
+  }
+  refreshBgStatus();
+}
+
+async function runBackgroundNow() {
+  if (!state.settings.bgEnabled) {
+    toast('ابتدا بررسی خودکار را روشن کنید', true);
+    return;
+  }
+  const btn = $('bg-run');
+  btn.disabled = true;
+  $('bg-status').innerHTML = '<span class="spin"></span>در حال بررسی… (ممکن است تا یک دقیقه طول بکشد)';
+  try {
+    const r = await bgDispatch('runNow');
+    if (r && r.error) toast('خطا: ' + r.error, true);
+    else if (r && r.notified) toast('فرصت پیدا شد و اعلان ارسال شد');
+    else toast('بررسی انجام شد؛ فرصت مناسبی نبود');
+  } catch (e) {
+    toast(e.message, true);
+  }
+  btn.disabled = false;
+  await refreshBgStatus();
+  checkBackgroundFinding();
+}
+
 // ---------------------------------------------------------------- lock screen
 function setupLock() {
   const first = !store.get('secrets');
@@ -176,6 +325,7 @@ async function onUnlocked() {
   renderSuggestion();
   await refreshBalance();
   settlePaperTrades().catch(() => {});
+  checkBackgroundFinding();
 }
 
 function lockNow() {
@@ -191,6 +341,7 @@ function showTab(name) {
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   if (name === 'positions') renderPositions();
   if (name === 'journal') settlePaperTrades().finally(renderJournal);
+  if (name === 'settings') refreshBgStatus();
   window.scrollTo(0, 0);
 }
 
@@ -213,47 +364,19 @@ async function analyze() {
   state.current = null;
   renderSuggestion();
   try {
-    setProgress('دریافت بازارهای تعهدی…');
-    await state.market.load();
-    const cands = state.market.candidates(Number(s.candidates) || 5);
-    if (!cands.length) throw new Error('بازار تعهدی فعالی پیدا نشد');
-
-    setProgress(`محاسبه اندیکاتورها برای ${toFaDigits(cands.length)} بازار…`);
-    const snapshot = await buildSnapshot(state.api, cands);
-    if (!snapshot.length) throw new Error('داده کندل دریافت نشد');
-
-    setProgress('تحلیل با هوش مصنوعی…');
-    const raw = await askModel(
+    const res = await runAnalysis(
+      state.api,
+      state.market,
       { baseUrl: s.aiBaseUrl, apiKey: state.secrets.aiKey, model: s.aiModel },
-      systemPrompt(),
-      userPrompt(snapshot),
+      Number(s.candidates) || 10,
+      (stage, i, total) => {
+        if (stage === 'markets') setProgress('دریافت بازارهای تعهدی…');
+        if (stage === 'candles') setProgress(`محاسبه اندیکاتورها: بازار ${toFaDigits(i)} از ${toFaDigits(total)}…`);
+        if (stage === 'ai') setProgress('تحلیل با هوش مصنوعی…');
+      },
     );
-    const idea = normalizeIdea(raw, snapshot);
-    const current = { idea, createdAt: Date.now(), warnings: [...state.market.warnings] };
-
-    if (idea.decision === 'trade') {
-      setProgress('بررسی قوانین ریسک…');
-      const m = snapshot.find((x) => x.symbol === idea.symbol);
-      const res = await planFor(idea, m._price);
-      current.plan = res.plan;
-      current.reasons = res.reasons;
-      const entry = {
-        id: 'e' + Date.now(),
-        mode: s.mode,
-        createdAt: current.createdAt,
-        symbol: idea.symbol,
-        side: idea.side,
-        confidence: idea.confidence,
-        reasoning: idea.reasoning_fa,
-        status: res.ok ? 'suggested' : 'blocked',
-        blockReasons: res.reasons,
-        ...(res.plan || {}),
-      };
-      state.journal.push(entry);
-      saveJournal();
-      current.entryId = entry.id;
-    }
-    state.current = current;
+    setProgress('بررسی قوانین ریسک…');
+    await adoptIdea(res, Date.now(), null);
     setProgress('');
   } catch (e) {
     setProgress('');
@@ -265,8 +388,40 @@ async function analyze() {
   }
 }
 
+/**
+ * Turn an analysis result (from the app or the background scanner) into the current
+ * suggestion: run the risk engine and record it in the journal.
+ */
+async function adoptIdea(res, createdAt, source) {
+  const idea = res.idea;
+  const current = { idea, createdAt, source, warnings: [...(res.warnings || [])], scanned: res.scanned };
+  if (idea.decision === 'trade' && res.price) {
+    if (!state.market.markets) await state.market.load();
+    const r = await planFor(idea, res.price, res.spreadPct);
+    current.plan = r.plan;
+    current.reasons = r.reasons;
+    const entry = {
+      id: 'e' + Date.now(),
+      mode: state.settings.mode,
+      createdAt,
+      source: source || 'manual',
+      symbol: idea.symbol,
+      side: idea.side,
+      confidence: idea.confidence,
+      reasoning: idea.reasoning_fa,
+      status: r.ok ? 'suggested' : 'blocked',
+      blockReasons: r.reasons,
+      ...(r.plan || {}),
+    };
+    state.journal.push(entry);
+    saveJournal();
+    current.entryId = entry.id;
+  }
+  state.current = current;
+}
+
 /** Run the risk engine for an idea at a given price. */
-async function planFor(idea, price) {
+async function planFor(idea, price, spreadPct) {
   const market = state.market.markets[idea.symbol];
   const precision = state.market.precision(idea.symbol);
   let openPositions = 0;
@@ -282,6 +437,7 @@ async function planFor(idea, price) {
     settings: state.settings,
     tradesToday: tradesToday(state.journal, state.settings.mode),
     openPositions,
+    spreadPct,
   });
   return { ok: r.ok, plan: r.plan || null, reasons: r.reasons || [] };
 }
@@ -353,6 +509,7 @@ function renderSuggestion() {
         <span class="sym" dir="ltr">${esc(i.symbol)}</span>
         <span class="side ${i.side}">${i.side === 'long' ? 'لانگ' : 'شورت'}</span>
       </div>
+      ${c.source === 'background' ? `<div class="src">پیدا شده در بررسی خودکار، ساعت ${esc(fmtTime(c.createdAt))}</div>` : ''}
       <div class="small muted" style="margin-top:6px">اطمینان تحلیل: ${toFaDigits(Math.round(i.confidence))}٪ · نگه‌داری حدود ${toFaDigits(Math.round(i.holding_hours))} ساعت</div>
       <div class="conf"><i style="width:${Math.max(0, Math.min(100, i.confidence))}%"></i></div>
       ${p ? planGrid(p) : ''}
@@ -387,7 +544,8 @@ async function acceptSuggestion() {
     if (moved > c.idea.stop_loss_pct / 2) {
       throw new Error(`قیمت از زمان تحلیل ${fmtPct(moved, 1)} تغییر کرده؛ دوباره تحلیل کنید`);
     }
-    const res = await planFor(c.idea, price);
+    const spreadNow = ((best.ask - best.bid) / ((best.ask + best.bid) / 2)) * 100;
+    const res = await planFor(c.idea, price, spreadNow);
     if (!res.ok) throw new Error(res.reasons.join(' — '));
     const p = res.plan;
     setProgress('');
@@ -669,6 +827,8 @@ function fillSettingsForm() {
   $('s-ai-url').value = s.aiBaseUrl || '';
   $('s-ai-model').value = s.aiModel || '';
   $('s-ai-key').value = state.secrets.aiKey || '';
+  $('s-cands').value = Number(s.candidates) || 10;
+  $('bg-enabled').checked = !!s.bgEnabled;
   $('s-nb-key').value = state.secrets.nbKey || '';
   $('s-nb-priv').value = state.secrets.nbPriv || '';
   renderModeSeg();
@@ -719,6 +879,7 @@ async function saveSettings() {
     paperBalanceToman: num('s-paper') || DEFAULT_SETTINGS.paperBalanceToman,
     aiBaseUrl: $('s-ai-url').value.trim(),
     aiModel: $('s-ai-model').value.trim(),
+    candidates: Math.min(15, Math.max(3, Math.round(num('s-cands')) || 10)),
   });
   state.secrets = {
     ...state.secrets,
@@ -733,6 +894,7 @@ async function saveSettings() {
   store.set('secrets', await encryptSecrets(state.pin, state.secrets));
   makeApi();
   fillSettingsForm();
+  if (state.settings.bgEnabled && nativeAvailable()) bgDispatch('configure', bgConfig(true)).catch(() => {});
   $('settings-msg').textContent = 'ذخیره شد ✓';
   setTimeout(() => ($('settings-msg').textContent = ''), 2500);
   refreshBalance();
@@ -782,6 +944,11 @@ async function wipe() {
     countdown: 3,
   });
   if (!ok) return;
+  try {
+    await bgDispatch('configure', { enabled: false });
+  } catch {
+    /* ignore */
+  }
   localStorage.clear();
   location.reload();
 }
@@ -805,9 +972,12 @@ function init() {
   $('gen-key').onclick = generateKeys;
   $('lock-now').onclick = lockNow;
   $('wipe').onclick = wipe;
+  $('bg-enabled').onchange = (e) => toggleBackground(e.target.checked);
+  $('bg-run').onclick = runBackgroundNow;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) state.hiddenAt = Date.now();
     else if (state.pin && state.hiddenAt && Date.now() - state.hiddenAt > AUTO_LOCK_MS && !state.busy) lockNow();
+    else if (state.pin) checkBackgroundFinding();
   });
   setupLock();
 }

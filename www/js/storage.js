@@ -72,5 +72,7 @@ export const DEFAULT_SETTINGS = {
   paperBalanceToman: 996000,
   aiBaseUrl: '',
   aiModel: '',
-  candidates: 5,
+  candidates: 10,
+  bgEnabled: false,
+  bgSeenAt: 0,
 };

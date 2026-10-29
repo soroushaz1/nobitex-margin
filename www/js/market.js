@@ -15,6 +15,35 @@ const FALLBACK_AMOUNT_STEP = {
   ADAIRT: 1,
 };
 
+export const MAX_CANDIDATES = 15;
+// Markets with less than ~1 billion toman daily volume are skipped (wide spreads, easy to move).
+export const MIN_VOLUME_RIALS = 10_000_000_000;
+
+/** Best ask/bid from an orderbook regardless of sort order. */
+export function bestOf(book) {
+  const asks = (book && book.asks) || [];
+  const bids = (book && book.bids) || [];
+  const ask = asks.length ? Math.min(...asks.slice(0, 5).map((x) => Number(x[0]))) : NaN;
+  const bid = bids.length ? Math.max(...bids.slice(0, 5).map((x) => Number(x[0]))) : NaN;
+  return { ask, bid };
+}
+
+/** Spread in percent for every symbol in one request (/v3/orderbook/all). */
+export async function spreads(api) {
+  const out = {};
+  try {
+    const all = await api.orderbook('all');
+    for (const [sym, book] of Object.entries(all)) {
+      if (!book || typeof book !== 'object' || !book.asks) continue;
+      const { ask, bid } = bestOf(book);
+      if (ask > 0 && bid > 0) out[sym.toUpperCase()] = ((ask - bid) / ((ask + bid) / 2)) * 100;
+    }
+  } catch {
+    /* spreads are optional */
+  }
+  return out;
+}
+
 export function symbolOf(src) {
   return `${src.toUpperCase()}IRT`;
 }
@@ -65,16 +94,16 @@ export class MarketInfo {
     return this.stats[`${src}-rls`] || null;
   }
 
-  /** Most liquid tradable rial margin markets. */
-  candidates(n = 5) {
+  /** Most liquid tradable rial margin markets (skips thin markets). */
+  candidates(n = 10) {
     const rows = Object.entries(this.markets)
       .map(([symbol, m]) => {
         const s = this.statFor(m.src);
         return { symbol, ...m, volume: s ? Number(s.volumeDst) || 0 : 0, closed: s ? !!s.isClosed : false };
       })
-      .filter((x) => !x.closed && (x.buyEnabled || x.sellEnabled) && x.volume > 0);
+      .filter((x) => !x.closed && (x.buyEnabled || x.sellEnabled) && x.volume >= MIN_VOLUME_RIALS);
     rows.sort((a, b) => b.volume - a.volume);
-    return rows.slice(0, n);
+    return rows.slice(0, Math.min(Math.max(Math.round(n) || 10, 3), MAX_CANDIDATES));
   }
 
   precision(symbol) {

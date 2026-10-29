@@ -28,9 +28,15 @@ jobs:
       - name: Run logic tests
         run: npm test
 
+      - name: Build background runner script
+        run: npm run build:runner
+
       - name: Create Android project
         run: |
           npx cap add android
+          # Background runner ships its JS engine as a local .aar (see plugin README)
+          sed -i "s#dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'#&\n        dirs '../../node_modules/@capacitor/background-runner/android/src/main/libs', 'libs'#" android/app/build.gradle
+          grep -q "background-runner/android/src/main/libs" android/app/build.gradle || (echo "flatDir patch failed"; sed -n '1,60p' android/app/build.gradle; exit 1)
           npx cap sync android
 
       - name: Build APK signed with the fixed key (so updates install over the old app)

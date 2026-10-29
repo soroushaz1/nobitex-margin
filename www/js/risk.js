@@ -17,6 +17,7 @@ export const LIMITS = {
   MAX_OPEN_POSITIONS: 1,
   MIN_CONFIDENCE: 55,
   STOP_LIMIT_SLIPPAGE_PCT: 0.5,
+  MAX_SPREAD_PCT: 0.4,
 };
 
 export const DEFAULT_MIN_ORDER_RIALS = 3_000_000;
@@ -61,6 +62,8 @@ export function buildPlan(idea, ctx) {
   if (!(conf >= LIMITS.MIN_CONFIDENCE)) reasons.push(`اطمینان تحلیل کمتر از ${LIMITS.MIN_CONFIDENCE} است`);
   if (side === 'long' && market.buyEnabled === false) reasons.push('معامله خرید (لانگ) در این بازار فعال نیست');
   if (side === 'short' && market.sellEnabled === false) reasons.push('معامله فروش (شورت) در این بازار فعال نیست');
+  if (Number(ctx.spreadPct) > LIMITS.MAX_SPREAD_PCT)
+    reasons.push(`اختلاف قیمت خرید و فروش این بازار (${Number(ctx.spreadPct).toFixed(2)}٪) زیاد است`);
   if ((ctx.openPositions || 0) >= LIMITS.MAX_OPEN_POSITIONS) reasons.push('یک پوزیشن باز دارید؛ هم‌زمان فقط یکی مجاز است');
   if ((ctx.tradesToday || 0) >= s.maxTradesPerDay) reasons.push(`سقف ${s.maxTradesPerDay} معامله در روز پر شده است`);
 
@@ -128,6 +131,21 @@ export function buildPlan(idea, ctx) {
       cappedByBalance,
     },
   };
+}
+
+/**
+ * Quick validity check of an AI idea without account data (used by the background
+ * scanner to decide whether a notification is worth sending).
+ */
+export function ideaLooksValid(idea, spreadPct) {
+  if (!idea || idea.decision !== 'trade' || !idea.side) return false;
+  const sl = Number(idea.stop_loss_pct);
+  const tp = Number(idea.take_profit_pct);
+  if (!(sl >= LIMITS.MIN_STOP_PCT && sl <= LIMITS.MAX_STOP_PCT)) return false;
+  if (!(tp / sl >= LIMITS.MIN_REWARD_RISK)) return false;
+  if (!(Number(idea.confidence) >= LIMITS.MIN_CONFIDENCE)) return false;
+  if (Number(spreadPct) > LIMITS.MAX_SPREAD_PCT) return false;
+  return true;
 }
 
 /** Market order with a protective price bound (max slippage). */
