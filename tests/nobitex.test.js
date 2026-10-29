@@ -49,7 +49,8 @@ test('signed request: headers, signature over ts+METHOD+path?query+body, URL-saf
   await api.addMarginOrder({ src: 'btc', dst: 'rls', side: 'buy', amount: '0.001', price: '100', leverage: 2, execution: 'market' });
 
   const spki = createPublicKey(k.privateKey);
-  for (const { url, init } of calls) {
+  const signed = calls.filter((c) => !c.url.includes('/v3/orderbook/'));
+  for (const { url, init } of signed) {
     const h = init.headers;
     assert.equal(h['Nobitex-Key'], 'PUBKEY');
     assert.equal(h['Nobitex-Timestamp'], '1750000000');
@@ -60,8 +61,8 @@ test('signed request: headers, signature over ts+METHOD+path?query+body, URL-saf
     const sig = Buffer.from(h['Nobitex-Signature'].replace(/-/g, '+').replace(/_/g, '/'), 'base64');
     assert.ok(verify(null, Buffer.from(msg), spki, sig), `signature invalid for ${init.method} ${path}`);
   }
-  assert.equal(calls[0].url, 'https://apiv2.nobitex.ir/positions/list?status=active');
-  const body = JSON.parse(calls[1].init.body);
+  assert.equal(signed[0].url, 'https://apiv2.nobitex.ir/positions/list?status=active');
+  const body = JSON.parse(signed[1].init.body);
   assert.deepEqual(body, { srcCurrency: 'btc', dstCurrency: 'rls', type: 'buy', amount: '0.001', price: '100', leverage: '2', execution: 'market' });
 });
 
@@ -94,4 +95,55 @@ test('margin balance: v2 wallets, then legacy list fallback', async () => {
     ]),
   });
   assert.deepEqual(await api.marginBalanceRials(), { balance: 9000000, blocked: 960000 });
+});
+
+// An exchange that enforces the 30-second timestamp window like Nobitex does.
+function strictExchange({ serverNow, dateHeader = true, lastUpdate = true, calls = [] }) {
+  return mockFetch(
+    [
+      [(u) => u.includes('/v3/orderbook/'), () => ({
+        body: { status: 'ok', asks: [], bids: [], ...(lastUpdate ? { lastUpdate: serverNow() } : {}) },
+        headers: dateHeader ? { date: new Date(serverNow()).toUTCString() } : {},
+      })],
+      [() => true, (u, init) => {
+        const ts = Number(init.headers['Nobitex-Timestamp']);
+        if (Math.abs(ts * 1000 - serverNow()) > 30_000) {
+          return { status: 400, body: { status: 'failed', code: 'InvalidTimestamp', message: 'The timestamp value difference from now is more than 30 seconds.' } };
+        }
+        return { body: { status: 'ok', wallets: { RLS: { balance: '9960000', blocked: '0' } } }, headers: dateHeader ? { date: new Date(serverNow()).toUTCString() } : {} };
+      }],
+    ],
+    calls,
+  );
+}
+
+test('phone clock 3 minutes behind: syncs with the server Date header before signing', async () => {
+  const k = nodeKey();
+  const phone = () => 1_750_000_000_000;
+  const server = () => phone() + 180_000;
+  const api = new Nobitex({ apiKey: 'K', privateKey: k.pem, nacl, fetchFn: strictExchange({ serverNow: server }), now: phone });
+  assert.deepEqual(await api.marginBalanceRials(), { balance: 9960000, blocked: 0 });
+});
+
+test('no Date header exposed: falls back to orderbook lastUpdate', async () => {
+  const k = nodeKey();
+  const phone = () => 1_750_000_000_000;
+  const server = () => phone() - 240_000;
+  const api = new Nobitex({ apiKey: 'K', privateKey: k.pem, nacl, fetchFn: strictExchange({ serverNow: server, dateHeader: false }), now: phone });
+  assert.deepEqual(await api.marginBalanceRials(), { balance: 9960000, blocked: 0 });
+});
+
+test('timestamp rejected later (clock drift): resyncs and retries exactly once', async () => {
+  const k = nodeKey();
+  let drift = 0;
+  const phone = () => 1_750_000_000_000;
+  const server = () => phone() + drift;
+  const calls = [];
+  const api = new Nobitex({ apiKey: 'K', privateKey: k.pem, nacl, fetchFn: strictExchange({ serverNow: server, calls }), now: phone });
+  await api.marginBalanceRials();
+  drift = 120_000; // server jumps ahead; cached offset is now wrong
+  const n = calls.length;
+  assert.deepEqual(await api.marginBalanceRials(), { balance: 9960000, blocked: 0 });
+  const after = calls.slice(n).map((c) => c.url.replace('https://apiv2.nobitex.ir', ''));
+  assert.deepEqual(after, ['/v2/wallets?type=margin', '/v3/orderbook/BTCIRT', '/v2/wallets?type=margin']);
 });

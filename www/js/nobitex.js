@@ -8,6 +8,11 @@ import { b64AnyToBytes, hexToBytes, bytesToB64 } from './util.js';
 
 export const BASE_URL = 'https://apiv2.nobitex.ir';
 export const USER_AGENT = 'TraderBot/DastyarTaahodi';
+const CLOCK_RESYNC_MS = 10 * 60 * 1000;
+
+function isTimestampError(e) {
+  return /timestamp/i.test(String((e && e.message) || '')) || /timestamp/i.test(String((e && e.code) || ''));
+}
 
 export class NobitexError extends Error {
   constructor(message, { status, code, body } = {}) {
@@ -65,6 +70,7 @@ export class Nobitex {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.now = now;
     this.clockOffsetMs = 0; // server time - local time, learned from Date headers
+    this.clockSyncedAt = 0;
     this.secretKey = null;
     if (privateKey) {
       const seed = privateKey instanceof Uint8Array ? privateKey : parsePrivateKey(privateKey);
@@ -92,14 +98,29 @@ export class Nobitex {
   }
 
   async request(method, path, { params, body, auth = false } = {}) {
+    if (auth) {
+      if (!this.hasAuth) throw new NobitexError('کلید API تنظیم نشده است');
+      // Nobitex rejects signatures whose timestamp is >30s off, so use the server's clock.
+      if (!this.clockSyncedAt || this.now() - this.clockSyncedAt > CLOCK_RESYNC_MS) await this.syncClock();
+    }
+    try {
+      return await this.send(method, path, { params, body, auth });
+    } catch (e) {
+      // A rejected timestamp means the request was not executed, so one retry is safe.
+      if (auth && isTimestampError(e)) {
+        await this.syncClock(true);
+        return this.send(method, path, { params, body, auth });
+      }
+      throw e;
+    }
+  }
+
+  async send(method, path, { params, body, auth }) {
     const fullPath = path + buildQuery(params);
     const rawBody = body !== undefined ? JSON.stringify(body) : '';
     const headers = { Accept: 'application/json', 'User-Agent': USER_AGENT };
     if (rawBody) headers['Content-Type'] = 'application/json';
-    if (auth) {
-      if (!this.hasAuth) throw new NobitexError('کلید API تنظیم نشده است');
-      Object.assign(headers, this.signHeaders(method, fullPath, rawBody));
-    }
+    if (auth) Object.assign(headers, this.signHeaders(method, fullPath, rawBody));
     let res;
     try {
       res = await this.fetch(this.baseUrl + fullPath, {
@@ -126,14 +147,42 @@ export class Nobitex {
     return data;
   }
 
+  /** Read the server time from the HTTP Date header. Returns true if learned. */
   learnClock(res) {
     try {
-      const d = res.headers && (res.headers.get ? res.headers.get('date') : res.headers.date);
-      if (!d) return;
+      const h = res.headers;
+      const d = h && (h.get ? h.get('date') || h.get('Date') : h.date || h.Date);
+      if (!d) return false;
       const server = Date.parse(d);
-      if (!isNaN(server)) this.clockOffsetMs = server - this.now();
+      if (isNaN(server)) return false;
+      // Date has 1s resolution; +500ms centers the rounding error.
+      this.clockOffsetMs = server + 500 - this.now();
+      this.clockSyncedAt = this.now();
+      this.lastDateLearned = true;
+      return true;
     } catch {
-      /* ignore */
+      return false;
+    }
+  }
+
+  /**
+   * Learn the server clock with a cheap public call. Falls back to the orderbook's
+   * lastUpdate (server-side ms timestamp) if the Date header is not exposed.
+   */
+  async syncClock(force = false) {
+    if (!force && this.clockSyncedAt && this.now() - this.clockSyncedAt < CLOCK_RESYNC_MS) return;
+    this.lastDateLearned = false;
+    let book = null;
+    try {
+      book = await this.send('GET', '/v3/orderbook/BTCIRT', {});
+    } catch {
+      /* fall through */
+    }
+    if (this.lastDateLearned) return; // Date header worked
+    const last = book && Number(book.lastUpdate);
+    if (last > 1e12) {
+      this.clockOffsetMs = last - this.now();
+      this.clockSyncedAt = this.now();
     }
   }
 
