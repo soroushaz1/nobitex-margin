@@ -33,19 +33,23 @@ jobs:
           npx cap add android
           npx cap sync android
 
-      - name: Use the fixed signing key (so updates install over the old app)
-        run: |
-          mkdir -p ~/.android
-          cp keystore/debug.keystore ~/.android/debug.keystore
-
-      - name: Build APK
+      - name: Build APK signed with the fixed key (so updates install over the old app)
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon \
+            -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore/debug.keystore \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android
 
       - name: Rename APK
         run: cp android/app/build/outputs/apk/debug/app-debug.apk nobitex-margin.apk
+
+      - name: Verify signing key
+        run: |
+          keytool -exportcert -keystore keystore/debug.keystore -storepass android -alias androiddebugkey -file ks.der
+          python3 scripts/check_apk_cert.py nobitex-margin.apk ks.der
 
       - uses: actions/upload-artifact@v4
         with:
