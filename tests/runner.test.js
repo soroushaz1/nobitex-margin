@@ -14,7 +14,7 @@ function makeRunner({ aiDecision = 'trade', confidence = 66, spread = 0.1, aiFai
   const notifications = [];
   const listeners = {};
   const calls = [];
-  const candles = toUdf(makeCandles(Array.from({ length: 220 }, (_, i) => 10_000_000_000 + i * 4_000_000)));
+  const candles = toUdf(makeCandles(Array.from({ length: 220 }, (_, i) => (10_000_000_000 + i * 4_000_000) / 10))); // toman, like Nobitex charts
   const respond = (body, status = 200) => ({
     ok: status < 300,
     status,
@@ -88,7 +88,7 @@ test('valid setup → one notification, stored finding; same idea is not re-noti
   assert.equal(latest.enabled, true);
   assert.equal(latest.latest.idea.decision, 'trade');
   assert.equal(latest.latest.notified, true);
-  assert.ok(latest.latest.price > 0);
+  assert.ok(latest.latest.price > 9e9, 'background price must be in rials like the orderbook');
   await r.dispatch('checkMarket');
   assert.equal(r.notifications.length, 1, 'repeat idea within 2h must be silent');
   assert.ok(!r.calls.some((u) => u.includes('/positions') || u.includes('/orders')), 'background must never touch account endpoints');

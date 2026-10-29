@@ -14,6 +14,17 @@ function isTimestampError(e) {
   return /timestamp/i.test(String((e && e.message) || '')) || /timestamp/i.test(String((e && e.code) || ''));
 }
 
+/**
+ * Nobitex's chart endpoint (/market/udf/history) quotes IRT markets in TOMAN, while the
+ * orderbook, orders and positions use RIALS. Convert candles to rials so every price in
+ * the app is in one unit. Volume (v) is in the base coin and stays as is.
+ */
+export function udfToRials(symbol, d) {
+  if (!d || !/IRT$/i.test(String(symbol))) return d;
+  const x10 = (arr) => (Array.isArray(arr) ? arr.map((v) => Number(v) * 10) : arr);
+  return { ...d, o: x10(d.o), h: x10(d.h), l: x10(d.l), c: x10(d.c) };
+}
+
 export class NobitexError extends Error {
   constructor(message, { status, code, body } = {}) {
     super(message);
@@ -196,13 +207,16 @@ export class Nobitex {
   orderbook(symbol) {
     return this.request('GET', `/v3/orderbook/${symbol}`);
   }
-  /** Candles in TradingView UDF format {s,t,o,h,l,c,v}. resolution: '15','60','240','D' */
-  ohlc(symbol, resolution, countback = 200) {
+  /**
+   * Candles in TradingView UDF format {s,t,o,h,l,c,v}. resolution: '15','60','240','D'.
+   * Prices are returned in rials, like the orderbook and orders (see udfToRials).
+   */
+  async ohlc(symbol, resolution, countback = 200) {
     const to = Math.floor((this.now() + this.clockOffsetMs) / 1000);
-    return this.request('GET', '/market/udf/history', { params: { symbol, resolution, to, countback } });
+    return udfToRials(symbol, await this.request('GET', '/market/udf/history', { params: { symbol, resolution, to, countback } }));
   }
   async ohlcRange(symbol, resolution, from, to) {
-    return this.request('GET', '/market/udf/history', { params: { symbol, resolution, from, to } });
+    return udfToRials(symbol, await this.request('GET', '/market/udf/history', { params: { symbol, resolution, from, to } }));
   }
   marginMarkets() {
     // Works with or without auth; signed when keys exist (some accounts need it).

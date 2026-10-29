@@ -133,7 +133,8 @@ test('askModel falls back when json mode unsupported', async () => {
 
 // ---- integration with a fake exchange ----
 function fakeExchange(state = {}) {
-  const candles = toUdf(makeCandles(Array.from({ length: 220 }, (_, i) => 10_000_000_000 + i * 5_000_000)));
+  // Nobitex charts quote IRT markets in toman; the orderbook below is in rials.
+  const candles = toUdf(makeCandles(Array.from({ length: 220 }, (_, i) => (10_000_000_000 + i * 5_000_000) / 10)));
   return mockFetch([
     [(u) => u.includes('/v2/options'), () => ({ body: { status: 'ok', nobitex: { minOrders: { rls: '3000000' }, amountPrecisions: { BTCIRT: '0.000001' }, pricePrecisions: { BTCIRT: '10' } } } })],
     [(u) => u.includes('/margin/markets/list'), () => ({ body: { status: 'ok', markets: {
@@ -159,6 +160,16 @@ test('market discovery keeps only rial margin markets, ranked by volume', async 
   const snap = await buildSnapshot(api, c);
   assert.equal(snap.length, 2);
   assert.ok(snap[0].timeframes['1h'].rsi14 > 50);
+  // candle price (toman on the wire) must come back in rials, matching the orderbook
+  const book = 11_095_000_000;
+  assert.ok(Math.abs(snap[0]._price - book) / book < 0.01, `snapshot price ${snap[0]._price} vs orderbook ${book}`);
+});
+
+test('chart candles for IRT markets are converted from toman to rials', async () => {
+  const { udfToRials } = await import('../www/js/nobitex.js');
+  const d = { s: 'ok', t: [1], o: [21686.6], h: [21800], l: [21600], c: [21738], v: [5] };
+  assert.deepEqual(udfToRials('DOGEIRT', d), { s: 'ok', t: [1], o: [216866], h: [218000], l: [216000], c: [217380], v: [5] });
+  assert.equal(udfToRials('BTCUSDT', d), d);
 });
 
 test('live execution: bounded market entry, then OCO close with TP/SL', async (t) => {
