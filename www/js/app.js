@@ -833,7 +833,7 @@ async function renderPositions() {
         const prec = state.market.precision(symbol);
         const best = books[symbol];
         const pnl = positionPnl(p, best, entry && entry.amount, prec.amountStep);
-        const amount = positionAmounts(p, entry && entry.amount, prec.amountStep, best && (best.ask + best.bid) / 2)[0];
+        const amount = positionAmounts(p, entry && entry.amount, prec.amountStep)[0];
         const cur = best ? (side === 'long' ? best.bid : best.ask) : null;
         const rows = [
           ['قیمت ورود', p.entryPrice ? fmtToman(p.entryPrice) : '—'],
@@ -853,6 +853,13 @@ async function renderPositions() {
           ${side ? `<span class="side ${side}">${sideFa(side)}</span>` : ''}</div>
           ${pnlBlock(pnl)}
           <div class="grid">${rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join('')}</div>
+          ${
+            amount && cur && Number(amount) * cur < (prec.minOrderRials || 3_000_000)
+              ? `<div class="note warn small">از این پوزیشن فقط مقدار ناچیزی (${esc(amount)}، حدود ${fmtToman(Number(amount) * cur)} تومان) مانده، ولی وثیقه‌اش${
+                  p.collateral ? ` (${fmtToman(p.collateral)} تومان)` : ''
+                } تا بسته شدن کامل قفل است. «بستن فوری» را بزنید.</div>`
+              : ''
+          }
           ${entry && entry.protectedOk === false ? '<div class="note bad small">حد ضرر برای این پوزیشن ثبت نشده است!</div>' : ''}
           ${!entry ? '<div class="note warn small">این پوزیشن خارج از برنامه باز شده یا برنامه حد سود/ضرر آن را نمی‌شناسد.</div>' : ''}
           <div class="btn-row">

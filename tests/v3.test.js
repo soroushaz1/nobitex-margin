@@ -4,7 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { buildPlan, ideaLooksValid, scanRules, protectionPrices } from '../www/js/risk.js';
 import { Nobitex, translateError } from '../www/js/nobitex.js';
 import { MarketInfo } from '../www/js/market.js';
-import { executePlan, closeNow, protectPosition, positionAmounts, positionPnl, positionSymbol } from '../www/js/trade.js';
+import { executePlan, closeNow, protectPosition, positionAmounts, positionPnl, positionSymbol, exactAmount } from '../www/js/trade.js';
 import { loadNacl, mockFetch } from './helpers.js';
 
 const nacl = loadNacl();
@@ -72,15 +72,20 @@ test('market filter: min volume 0 includes thin markets', async () => {
   assert.deepEqual(mi.candidates(10, 0).map((x) => x.symbol), ['BTCIRT', 'PEPEIRT']);
 });
 
-test('position amounts: long uses totalAsset (coin), short uses liability; wrong-unit values dropped', () => {
-  const long = { side: 'buy', totalAsset: '0.000950', liability: '5400000', collateral: '5400000', leverage: '2', entryPrice: '11000000000' };
-  assert.deepEqual(positionAmounts(long, '0.000956', 0.000001), ['0.000950', '0.000956', '0.000951']);
-  const short = { side: 'sell', liability: '0.000957', totalAsset: '10600000', collateral: '5300000', leverage: '2', entryPrice: '11000000000' };
-  assert.equal(positionAmounts(short, '0.000956', 0.000001)[0], '0.000957');
-  // a rial value in a coin field is rejected by the size sanity check
-  assert.deepEqual(positionAmounts({ ...long, totalAsset: '10500000' }, '0.000956', 0.000001), ['0.000956', '0.000951']);
-  // if the size check rejects everything, the raw values are still tried
-  assert.deepEqual(positionAmounts({ side: 'buy', totalAsset: '0.5', collateral: '1', leverage: '1', entryPrice: '16000000' }, null, 0.000001), ['0.500000']);
+// Real position returned by Nobitex (short, mostly closed, interest left over)
+const REAL_SHORT = {
+  id: 121669647, side: 'sell', srcCurrency: 'eth', dstCurrency: 'rls', status: 'Open', collateral: '6681921.5924333334',
+  leverage: '2', entryPrice: '6111952360', exitPrice: '6140810380', delegatedAmount: '0.000005475', liability: '0.0000054888',
+  totalAsset: '6585259.5943500834', liabilityInOrder: '0', assetInOrder: '0', unrealizedPNL: '-130256.10599697',
+};
+
+test('position amounts: exact exchange value first (short=liability, long=totalAsset); planned amount only as fallback', () => {
+  assert.deepEqual(positionAmounts(REAL_SHORT, '0.00219', 0.00001), ['0.0000054888'], 'never the planned 0.00219');
+  assert.deepEqual(positionAmounts({ side: 'sell', liability: '0.0021954888' }, '0.00219', 0.00001), ['0.0021954888', '0.00219']);
+  assert.deepEqual(positionAmounts({ side: 'buy', totalAsset: '0.000950', liability: '5400000' }, '0.000956', 0.000001), ['0.00095']);
+  assert.deepEqual(positionAmounts({ side: 'buy' }, '0.000956', 0.000001), ['0.000956', '0.000951']);
+  assert.equal(exactAmount('1e-7'), '0.0000001');
+  assert.equal(exactAmount('0'), null);
   assert.equal(positionSymbol({ srcCurrency: 'hype', dstCurrency: 'rls' }), 'HYPEIRT');
 });
 
@@ -163,7 +168,7 @@ test('close now on a LONG: cancels TP/SL first (incl. untriggered stop leg), the
   assert.ok(!state.order.includes('cancel-900'), 'spot orders are never touched');
   assert.match(state.listQuery, /status=open/);
   assert.match(state.listQuery, /tradeType=margin/);
-  assert.equal(state.closes[0].amount, '0.000950');
+  assert.equal(state.closes[0].amount, '0.00095');
   assert.equal(state.closes[0].execution, 'market');
   assert.ok(Number(state.closes[0].price) < 11_000_000_000, 'sell bound below bid');
   assert.ok(lines.some((l) => l.includes('بسته شد')));
@@ -196,7 +201,7 @@ test('close now: every attempt rejected → error carries the step log', async (
 });
 
 test('changing TP/SL: cancels old orders, retries with the next amount if rejected', async () => {
-  const state = { order: [], closes: [], rejectFirstClose: true, positions: [{ id: 5, srcCurrency: 'btc', dstCurrency: 'rls', side: 'sell', liability: '0.000960', collateral: '5300000', leverage: '2' }] };
+  const state = { order: [], closes: [], rejectFirstClose: true, positions: [{ id: 5, srcCurrency: 'btc', dstCurrency: 'rls', side: 'sell', liability: '0.0009601', collateral: '5300000', leverage: '2' }] };
   const api = new Nobitex({ apiKey: 'K', privateKey: pem, nacl, fetchFn: exchange(state) });
   const prices = protectionPrices('short', 11_000_000_000, 2, 4, 10);
   assert.ok(prices.stopPrice > 11_000_000_000 && prices.tpPrice < 11_000_000_000 && prices.stopLimitPrice > prices.stopPrice);
@@ -206,7 +211,8 @@ test('changing TP/SL: cancels old orders, retries with the next amount if reject
   assert.equal(state.order[0], 'cancel');
   assert.equal(state.closes.length, 2);
   assert.equal(state.closes[1].mode, 'oco');
-  assert.equal(state.closes[1].amount, '0.000958');
+  assert.equal(state.closes[0].amount, '0.0009601', 'exact liability first');
+  assert.equal(Number(state.closes[1].amount), 0.00096);
 });
 
 test('opening a trade while another market has a position works; same market refused', async () => {
@@ -227,4 +233,46 @@ test('Nobitex errors are explained in Persian; hanging requests time out', async
   assert.equal(translateError('Something new', null, 400), 'Something new');
   const api = new Nobitex({ nacl, timeoutMs: 50, fetchFn: () => new Promise(() => {}) });
   await assert.rejects(api.marketStats(), /طول کشید/);
+});
+
+test('real leftover short (0.0000054888 ETH): close sends the exact liability and succeeds', async () => {
+  const state = { order: [], closes: [], positions: [{ ...REAL_SHORT }] };
+  const api = new Nobitex({ apiKey: 'K', privateKey: pem, nacl, fetchFn: exchange(state) });
+  const res = await fastTimers(() => closeNow(api, state.positions[0], { amountStep: 0.00001, priceStep: 10, minOrderRials: 3_000_000 }, '0.00219'));
+  assert.equal(res.closed, true, res.log.join('\n'));
+  assert.equal(state.closes[0].amount, '0.0000054888');
+  assert.ok(Number(state.closes[0].price) > 11_010_000_000, 'buy-back bound above ask');
+});
+
+test('remainder left after a close (interest) is closed in a second step', async () => {
+  const state = { order: [], closes: [], positions: [{ id: 4, side: 'sell', srcCurrency: 'btc', dstCurrency: 'rls', liability: '0.0010000001', collateral: '1', leverage: '2' }] };
+  const base = exchange(state);
+  let n = 0;
+  const fetchFn = async (u, i) => {
+    if (/positions\/4\/close/.test(u)) {
+      n++;
+      const b = JSON.parse(i.body);
+      state.closes.push(b);
+      if (n === 1) state.positions[0] = { ...state.positions[0], liability: '0.0000000001' }; // first close leaves dust
+      else state.positions = [];
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => '{"status":"ok"}' };
+    }
+    return base(u, i);
+  };
+  const api = new Nobitex({ apiKey: 'K', privateKey: pem, nacl, fetchFn });
+  const res = await fastTimers(() => closeNow(api, state.positions[0], PREC, null));
+  assert.equal(res.closed, true, res.log.join('\n'));
+  assert.deepEqual(state.closes.map((c) => c.amount), ['0.0010000001', '0.0000000001']);
+});
+
+test('dust rejected by the exchange → clear Persian explanation', async () => {
+  const state = { order: [], closes: [], positions: [{ ...REAL_SHORT }], openOrders: [{ id: 1, status: 'Inactive', tradeType: 'Margin', srcCurrency: 'eth', dstCurrency: 'rls' }] };
+  const base = exchange(state);
+  const api = new Nobitex({
+    apiKey: 'K', privateKey: pem, nacl,
+    fetchFn: (u, i) => (/close|update-status/.test(u) ? Promise.resolve({ ok: false, status: 400, headers: { get: () => null }, text: async () => '{"status":"failed","code":"SmallOrder","message":"Order too small"}' }) : base(u, i)),
+  });
+  const err = await fastTimers(() => closeNow(api, state.positions[0], { amountStep: 0.00001, priceStep: 10, minOrderRials: 3_000_000 }, null).then(() => null, (e) => e));
+  assert.match(err.message, /خیلی کمی/);
+  assert.match(err.message, /بستن کامل/);
 });

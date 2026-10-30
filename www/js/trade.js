@@ -30,39 +30,41 @@ export async function activePositions(api) {
   return d.positions || [];
 }
 
+/** A positive decimal string with at most 10 decimals (no float noise), or null. */
+export function exactAmount(v) {
+  const n = Number(v);
+  if (!(n > 0) || !isFinite(n)) return null;
+  let str = String(v).trim();
+  if (!/^\d+(\.\d+)?$/.test(str)) str = n.toFixed(10);
+  const [i, f = ''] = str.split('.');
+  const frac = f.slice(0, 10).replace(/0+$/, '');
+  const out = frac ? `${i}.${frac}` : i;
+  return Number(out) > 0 ? out : null;
+}
+
 /**
- * Possible close amounts (in the coin) for a position, most likely first.
- * Nobitex reports a short's size as `liability` (coin borrowed) and a long's as
- * `totalAsset` (coin held); the planned amount is the fallback. Values that don't
- * match the position's size (collateral × leverage) are dropped.
+ * Close amounts (in the coin) for a position, most likely first.
+ * Verified against real Nobitex data: a short's size is `liability` (coin owed, which
+ * grows with interest, e.g. 0.0021954888) and its `totalAsset` is in rials; for a long
+ * it is the other way round (`totalAsset` = coin held). The exact value comes first —
+ * rounding it down to the market step leaves an unclosable remainder. The planned
+ * amount is used only when the exchange field is missing.
  */
-export function positionAmounts(p, fallbackAmount, step, refPrice) {
+export function positionAmounts(p, fallbackAmount, step) {
   const side = positionSide(p);
-  const raw =
-    side === 'long'
-      ? [p.totalAsset, fallbackAmount, Number(fallbackAmount) * 0.995]
-      : [p.liability, p.delegatedAmount, fallbackAmount];
-  const expected = Number(p.collateral) * Number(p.leverage);
-  const price = Number(refPrice) || Number(p.entryPrice);
+  const field = side === 'long' ? p.totalAsset : p.liability ?? p.delegatedAmount;
   const out = [];
-  const rejected = [];
-  for (const v of raw) {
-    const n = Number(v);
-    if (!(n > 0)) continue;
-    const a = floorToStep(n, step);
-    if (!(Number(a) > 0) || out.includes(a) || rejected.includes(a)) continue;
-    if (expected > 0 && price > 0) {
-      const ratio = (n * price) / expected;
-      if (ratio < 0.3 || ratio > 3) {
-        rejected.push(a);
-        continue;
-      }
-    }
-    out.push(a);
+  const add = (v) => {
+    if (v && Number(v) > 0 && !out.some((x) => Number(x) === Number(v))) out.push(v);
+  };
+  if (Number(field) > 0) {
+    add(exactAmount(field));
+    add(floorToStep(Number(field), step));
+  } else if (Number(fallbackAmount) > 0) {
+    add(floorToStep(Number(fallbackAmount), step));
+    if (side === 'long') add(floorToStep(Number(fallbackAmount) * 0.995, step));
   }
-  // If the size check rejected everything, the exchange fields may mean something else
-  // (e.g. collateral reported differently) — still try the raw values rather than give up.
-  return out.length ? out : rejected;
+  return out;
 }
 
 /** Unrealized profit in rials (exchange value if given, else computed from the book). */
@@ -73,7 +75,7 @@ export function positionPnl(p, best, fallbackAmount, step) {
   let pnl = given === undefined || given === null || given === '' ? NaN : Number(given);
   if (!isFinite(pnl)) {
     const entry = Number(p.entryPrice);
-    const amount = Number(positionAmounts(p, fallbackAmount, step || 1e-8, best && (best.ask + best.bid) / 2)[0]);
+    const amount = Number(positionAmounts(p, fallbackAmount, step || 1e-8)[0]);
     if (!(entry > 0 && amount > 0 && best)) return null;
     pnl = side === 'long' ? (best.bid - entry) * amount : (entry - best.ask) * amount;
   }
@@ -217,7 +219,7 @@ export async function protectPosition(api, position, prices, fallbackAmount, pre
     log('لغو سفارش‌های قبلی این بازار…');
     p = await freePosition(api, p, log);
   }
-  const amounts = positionAmounts(p, fallbackAmount, precision.amountStep, prices.tpPrice).slice(0, 3);
+  const amounts = positionAmounts(p, fallbackAmount, precision.amountStep).slice(0, 3);
   if (!amounts.length) {
     warnings.push('مقدار پوزیشن مشخص نشد؛ حد ضرر را از اپ نوبیتکس بگذارید.');
     return false;
@@ -262,7 +264,7 @@ export async function closeNow(api, position, precision, fallbackAmount, onLog =
   const closeAs = side === 'long' ? 'short' : 'long';
   const marketBound = boundedMarketPrice(closeAs, best.ask, best.bid, precision.priceStep, 0.5);
   const limitPrice = boundedMarketPrice(closeAs, best.ask, best.bid, precision.priceStep, 1);
-  const amounts = positionAmounts(p, fallbackAmount, precision.amountStep, mid).slice(0, 3);
+  const amounts = positionAmounts(p, fallbackAmount, precision.amountStep).slice(0, 3);
   log(`جهت: ${side === 'long' ? 'لانگ' : 'شورت'} · مقدارهای قابل امتحان: ${amounts.join('، ') || '—'}`);
   if (!amounts.length) {
     const err = new Error('مقدار پوزیشن مشخص نیست؛ از اپ نوبیتکس ببندید');
@@ -285,8 +287,14 @@ export async function closeNow(api, position, precision, fallbackAmount, onLog =
       log(`بستن (${a.execution === 'market' ? 'بازار' : 'محدود'}، مقدار ${a.amount}) رد شد: ${e.message}`);
     }
   }
+  const valueRials = Number(amounts[0]) * mid;
+  const minOrder = Number(precision.minOrderRials) || 0;
   if (!placed) {
-    const err = new Error(lastErr ? lastErr.message : 'سفارش بستن ثبت نشد');
+    let msg = lastErr ? lastErr.message : 'سفارش بستن ثبت نشد';
+    if (minOrder && valueRials < minOrder) {
+      msg = `فقط مقدار خیلی کمی (${amounts[0]} ${String(p.srcCurrency).toUpperCase()}، حدود ${Math.round(valueRials / 10).toLocaleString('en-US')} تومان) از این پوزیشن مانده که نوبیتکس سفارشش را قبول نکرد. آن را از اپ نوبیتکس («بستن کامل») ببندید تا وثیقه آزاد شود. (${msg})`;
+    }
+    const err = new Error(msg);
     err.log = steps;
     throw err;
   }
@@ -296,6 +304,24 @@ export async function closeNow(api, position, precision, fallbackAmount, onLog =
     if (open === false) {
       log('پوزیشن بسته شد ✓');
       return { closed: true, log: steps };
+    }
+  }
+  // Still listed: if only a remainder is left (e.g. interest), close that too, once.
+  const after = await refetch(api, p);
+  const rest = positionAmounts(after, null, precision.amountStep)[0];
+  if (rest && Number(rest) < Number(amounts[0])) {
+    log(`باقی‌مانده پوزیشن: ${rest} — تلاش برای بستن آن`);
+    try {
+      await api.closePosition(p.id, { amount: rest, price: marketBound, execution: 'market' });
+      for (let i = 0; i < 4; i++) {
+        await sleep(1500);
+        if ((await isStillOpen(api, p.id)) === false) {
+          log('پوزیشن بسته شد ✓');
+          return { closed: true, log: steps };
+        }
+      }
+    } catch (e) {
+      log(`بستن باقی‌مانده رد شد: ${e.message}`);
     }
   }
   log('سفارش بستن ثبت شده ولی پوزیشن هنوز در فهرست پوزیشن‌های باز است');
