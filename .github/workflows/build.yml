@@ -34,10 +34,11 @@ jobs:
       - name: Create Android project
         run: |
           npx cap add android
-          # Background runner ships its JS engine as a local .aar (see plugin README)
-          sed -i "s#dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'#&\n        dirs '../../node_modules/@capacitor/background-runner/android/src/main/libs', 'libs'#" android/app/build.gradle
-          grep -q "background-runner/android/src/main/libs" android/app/build.gradle || (echo "flatDir patch failed"; sed -n '1,60p' android/app/build.gradle; exit 1)
+          # notification tap → open app; background runner's local .aar
+          node scripts/patch-android.mjs android
+          grep -q '.NOTIFICATION_CLICKED' android/app/src/main/AndroidManifest.xml
           npx cap sync android
+          grep -B2 -A12 '<activity' android/app/src/main/AndroidManifest.xml
 
       - name: Build APK signed with the fixed key (so updates install over the old app)
         working-directory: android

@@ -68,7 +68,7 @@ async function backgroundCheck(now) {
         {
           id: Math.floor(now / 1000) % 2000000000,
           title: `فرصت معامله: ${res.idea.symbol} ${side}`,
-          body: `اطمینان ${fa(Math.round(res.idea.confidence))}٪ · حد ضرر ${fa(res.idea.stop_loss_pct)}٪ · حد سود ${fa(res.idea.take_profit_pct)}٪ — برای بررسی و تایید، برنامه را باز کنید (تا ۲۰ دقیقه معتبر است).`,
+          body: `اطمینان ${fa(Math.round(res.idea.confidence))}٪ · حد ضرر ${fa(res.idea.stop_loss_pct)}٪ · حد سود ${fa(res.idea.take_profit_pct)}٪ — برای دیدن و تایید یا رد، روی همین اعلان بزنید.`,
           autoCancel: true,
         },
       ]);

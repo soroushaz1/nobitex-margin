@@ -24,7 +24,7 @@ const nacl = window.nacl;
 const store = createStore();
 const $ = (id) => document.getElementById(id);
 
-const BG_FINDING_TTL_MS = 45 * 60 * 1000; // show background findings up to 45 min old
+const BG_FINDING_TTL_MS = 3 * 60 * 60 * 1000; // show background findings up to 3 h old (re-planned at the live price)
 const STALE_WARN_MS = 15 * 60 * 1000;
 
 const savedSettings = store.get('settings', {});
@@ -275,24 +275,47 @@ async function refreshBgStatus() {
   }
 }
 
-/** Show a recent background finding as the current suggestion (once). */
+/**
+ * Show a new background finding as the current suggestion (once), planned at the live
+ * price. Returns true if a finding was adopted.
+ */
 async function checkBackgroundFinding() {
-  if (!state.settings.bgEnabled || !nativeAvailable() || state.busy) return;
+  if (!state.settings.bgEnabled || !nativeAvailable() || state.busy || !state.pin) return false;
   try {
     const r = await bgDispatch('getLatest');
     const f = r && r.latest;
-    if (!f || !f.idea || f.idea.decision !== 'trade' || !f.price) return;
-    if (Date.now() - f.at > BG_FINDING_TTL_MS) return;
-    if (state.settings.bgSeenAt && f.at <= state.settings.bgSeenAt) return;
+    if (!f || !f.idea || f.idea.decision !== 'trade' || !f.price) return false;
+    if (Date.now() - f.at > BG_FINDING_TTL_MS) return false;
+    if (state.settings.bgSeenAt && f.at <= state.settings.bgSeenAt) return false;
     state.settings.bgSeenAt = f.at;
     saveSettingsOnly();
     state.busy = true;
-    await adoptIdea({ idea: f.idea, price: f.price, spreadPct: f.spreadPct, scanned: f.scanned, warnings: [] }, f.at, 'background');
-    state.busy = false;
     showTab('suggest');
-    renderSuggestion();
+    setProgress('دریافت پیشنهاد بررسی خودکار و قیمت لحظه‌ای…');
+    let planPrice = null;
+    let planSpread = null;
+    try {
+      const best = await currentBest(state.api, f.idea.symbol);
+      planPrice = f.idea.side === 'long' ? best.ask : best.bid;
+      planSpread = ((best.ask - best.bid) / ((best.ask + best.bid) / 2)) * 100;
+    } catch {
+      /* fall back to the scanner's price */
+    }
+    await adoptIdea(
+      { idea: f.idea, price: f.price, planPrice, planSpread, spreadPct: f.spreadPct, scanned: f.scanned, warnings: [] },
+      f.at,
+      'background',
+    );
+    return true;
   } catch (e) {
-    state.busy = false;
+    toast('پیشنهاد بررسی خودکار باز نشد: ' + (e.message || e), true);
+    return false;
+  } finally {
+    if (state.busy) {
+      state.busy = false;
+      setProgress('');
+      renderSuggestion();
+    }
   }
 }
 
@@ -504,7 +527,7 @@ async function adoptIdea(res, createdAt, source) {
   };
   if (idea.decision === 'trade' && res.price) {
     await ensureMarket();
-    const r = await planFor(idea, res.price, res.spreadPct);
+    const r = await planFor(idea, res.planPrice || res.price, res.planSpread ?? res.spreadPct);
     current.plan = r.plan;
     current.reasons = r.reasons;
   }
@@ -617,13 +640,13 @@ function renderSuggestion() {
       renderSuggestion();
     };
   const rc = $('recheck-btn');
-  if (rc) rc.onclick = recheckSuggestion;
+  if (rc) rc.onclick = () => recheckSuggestion();
 }
 
 /** Re-run the risk engine for the current idea at the live price. */
-async function recheckSuggestion() {
+async function recheckSuggestion(silent = false) {
   const c = state.current;
-  if (!c || state.busy) return;
+  if (!c || state.busy || (silent === true && (c.status !== 'new' || c.idea.decision !== 'trade'))) return;
   state.busy = true;
   try {
     setProgress('دریافت قیمت لحظه‌ای و بررسی دوباره…');
@@ -633,9 +656,9 @@ async function recheckSuggestion() {
     const r = await planFor(c.idea, price, spread);
     c.plan = r.plan;
     c.reasons = r.reasons;
-    toast(r.ok ? 'حالا قابل ثبت است' : 'هنوز قابل ثبت نیست', !r.ok);
+    if (silent !== true) toast(r.ok ? 'حالا قابل ثبت است' : 'هنوز قابل ثبت نیست', !r.ok);
   } catch (e) {
-    toast(e.message || String(e), true);
+    if (silent !== true) toast(e.message || String(e), true);
   } finally {
     setProgress('');
     state.busy = false;
@@ -1249,6 +1272,26 @@ async function wipe() {
   location.reload();
 }
 
+// ---------------------------------------------------------------- resume
+let resumeTimer = null;
+/** App came back to the foreground (incl. tapping a notification): lock or refresh. */
+function onResume() {
+  clearTimeout(resumeTimer);
+  resumeTimer = setTimeout(async () => {
+    const lockMs = Number(state.settings.lockMinutes ?? 30) * 60000;
+    if (state.pin && lockMs > 0 && state.hiddenAt && Date.now() - state.hiddenAt > lockMs && !state.busy) {
+      lockNow(); // after unlocking, onUnlocked() shows any new finding
+      return;
+    }
+    state.hiddenAt = 0;
+    if (!state.pin) return;
+    const adopted = await checkBackgroundFinding();
+    if (!adopted) await recheckSuggestion(true);
+    refreshBalance();
+    if (!$('tab-positions').hidden) renderPositions();
+  }, 300);
+}
+
 // ---------------------------------------------------------------- wiring
 function init() {
   if (!nacl) {
@@ -1272,17 +1315,12 @@ function init() {
   $('bg-run').onclick = runBackgroundNow;
   for (const [id] of RISK_FIELDS) $(id).addEventListener('input', renderRiskPreview);
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      state.hiddenAt = Date.now();
-      return;
-    }
-    const lockMs = Number(state.settings.lockMinutes ?? 30) * 60000;
-    if (state.pin && lockMs > 0 && state.hiddenAt && Date.now() - state.hiddenAt > lockMs && !state.busy) lockNow();
-    else if (state.pin) {
-      checkBackgroundFinding();
-      refreshBalance();
-    }
+    if (document.hidden) state.hiddenAt = Date.now();
+    else onResume();
   });
+  // Capacitor fires these when the Android activity is paused/resumed (e.g. opened from a notification)
+  document.addEventListener('pause', () => (state.hiddenAt = Date.now()));
+  document.addEventListener('resume', onResume);
   setupLock();
 }
 
