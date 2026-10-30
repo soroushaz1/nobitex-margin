@@ -24,8 +24,9 @@
   <main id="app" hidden>
     <header class="top">
       <div>
-        <div class="muted small">موجودی تعهدی</div>
+        <div class="muted small">موجودی آزاد تعهدی</div>
         <div id="balance" class="balance">—</div>
+        <div id="balance-sub" class="muted small"></div>
       </div>
       <span id="mode-badge" class="badge">آزمایشی</span>
     </header>
@@ -67,10 +68,18 @@
 
       <h2>مدیریت ریسک</h2>
       <div class="card">
-        <label>اهرم (حداکثر ۳) <input id="s-lev" type="number" min="1" max="3" step="0.5" /></label>
-        <label>ریسک هر معامله، درصد موجودی (حداکثر ۳) <input id="s-risk" type="number" min="0.5" max="3" step="0.5" /></label>
-        <label>حداکثر معامله در روز (حداکثر ۳) <input id="s-day" type="number" min="1" max="3" step="1" /></label>
-        <p class="muted small">حد ضرر همیشه اجباری است و هم‌زمان فقط یک پوزیشن باز مجاز است.</p>
+        <div class="two">
+          <label>اهرم (۱ تا ۱۰)<input id="s-lev" type="number" min="1" max="10" step="0.5" inputmode="decimal" /></label>
+          <label>ریسک هر معامله ٪ (۰٫۵ تا ۲۰)<input id="s-risk" type="number" min="0.5" max="20" step="0.5" inputmode="decimal" /></label>
+          <label>پوزیشن باز هم‌زمان (۱ تا ۱۰)<input id="s-maxpos" type="number" min="1" max="10" step="1" inputmode="numeric" /></label>
+          <label>معامله در روز (۰ = نامحدود)<input id="s-day" type="number" min="0" max="50" step="1" inputmode="numeric" /></label>
+          <label>حداقل اطمینان تحلیل (۰ تا ۹۰)<input id="s-conf" type="number" min="0" max="90" step="5" inputmode="numeric" /></label>
+          <label>حداقل نسبت سود به ضرر (۱ تا ۳)<input id="s-rr" type="number" min="1" max="3" step="0.1" inputmode="decimal" /></label>
+          <label>حداکثر اختلاف خرید/فروش ٪<input id="s-spread" type="number" min="0.1" max="3" step="0.1" inputmode="decimal" /></label>
+          <label>حداقل حجم روزانه (میلیارد تومان، ۰ = همه)<input id="s-vol" type="number" min="0" max="100" step="0.5" inputmode="decimal" /></label>
+        </div>
+        <p id="risk-preview" class="note small"></p>
+        <p class="muted small">دو چیز ثابت است: هر معامله حتماً حد ضرر دارد، و هیچ سفارشی بدون تایید شما ثبت نمی‌شود. اهرم واقعی هم از سقف خود نوبیتکس برای آن بازار بیشتر نمی‌شود.</p>
       </div>
 
       <h2>هوش مصنوعی</h2>
@@ -78,8 +87,7 @@
         <label>آدرس سرویس (سازگار با OpenAI)<input id="s-ai-url" dir="ltr" placeholder="https://.../v1" /></label>
         <label>نام مدل<input id="s-ai-model" dir="ltr" placeholder="model name" /></label>
         <label>کلید سرویس<input id="s-ai-key" dir="ltr" type="password" placeholder="sk-..." /></label>
-        <label>تعداد بازارهای بررسی‌شده (۳ تا ۱۵)<input id="s-cands" type="number" min="3" max="15" step="1" /></label>
-        <p class="muted small">بازارهای کم‌حجم (زیر حدود ۱ میلیارد تومان معامله روزانه) و بازارهای با اختلاف قیمت خرید و فروش زیاد خودکار کنار گذاشته می‌شوند.</p>
+        <label>تعداد بازارهای بررسی‌شده (۳ تا ۲۰)<input id="s-cands" type="number" min="3" max="20" step="1" inputmode="numeric" /></label>
         <button id="test-ai" class="btn ghost">آزمایش اتصال</button>
       </div>
 
@@ -111,6 +119,14 @@
 
       <h2>امنیت</h2>
       <div class="card">
+        <label>قفل خودکار بعد از رفتن به پس‌زمینه
+          <select id="s-lock">
+            <option value="5">۵ دقیقه</option>
+            <option value="30">۳۰ دقیقه</option>
+            <option value="120">۲ ساعت</option>
+            <option value="0">هیچ‌وقت (فقط هنگام باز کردن دوباره برنامه)</option>
+          </select>
+        </label>
         <button id="lock-now" class="btn ghost">قفل کردن</button>
         <button id="wipe" class="btn danger">پاک کردن همه اطلاعات</button>
       </div>

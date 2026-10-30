@@ -46,9 +46,18 @@ const ctx = (over = {}) => ({
 });
 const idea = (over = {}) => ({ symbol: 'BTCIRT', side: 'long', stop_loss_pct: 1.5, take_profit_pct: 3, confidence: 65, ...over });
 
-test('settings are clamped to hard limits', () => {
-  assert.deepEqual(effectiveSettings({ leverage: 10, riskPct: 20, maxTradesPerDay: 50 }), { leverage: 3, riskPct: 3, maxTradesPerDay: 3 });
-  assert.deepEqual(effectiveSettings({ leverage: 2.3 }), { leverage: 2.5, riskPct: 2, maxTradesPerDay: 3 });
+test('settings are clamped to the adjustable ranges', () => {
+  const e = effectiveSettings({ leverage: 25, riskPct: 50, maxTradesPerDay: 500, maxOpenPositions: 99, minConfidence: -5 });
+  assert.equal(e.leverage, 10);
+  assert.equal(e.riskPct, 20);
+  assert.equal(e.maxTradesPerDay, 50);
+  assert.equal(e.maxOpenPositions, 10);
+  assert.equal(e.minConfidence, 0);
+  const d = effectiveSettings({ leverage: 2.3 });
+  assert.equal(d.leverage, 2.5);
+  assert.equal(d.maxTradesPerDay, 0, 'default is unlimited');
+  assert.equal(d.maxOpenPositions, 3);
+  assert.equal(effectiveSettings({ maxTradesPerDay: '' }).maxTradesPerDay, 0);
 });
 
 test('plan sizing: loss at stop ≈ 2% of balance, stop/tp prices on the right side', () => {
@@ -71,18 +80,19 @@ test('plan rejections: bad R:R, wide stop, low confidence, disabled side, open p
     assert.equal(r.ok, false);
     return r.reasons.join(' | ');
   };
-  assert.match(bad({ take_profit_pct: 2 }), /نسبت سود/);
-  assert.match(bad({ stop_loss_pct: 8, take_profit_pct: 20 }), /حد ضرر/);
+  assert.match(bad({ take_profit_pct: 1.5 }), /نسبت سود/);
+  assert.match(bad({ stop_loss_pct: 20, take_profit_pct: 40 }), /حد ضرر/);
   assert.match(bad({ confidence: 40 }), /اطمینان/);
   assert.match(bad({ side: 'short' }, { market: { src: 'btc', dst: 'rls', sellEnabled: false } }), /شورت/);
-  assert.match(bad({}, { openPositions: 1 }), /پوزیشن باز/);
-  assert.match(bad({}, { tradesToday: 3 }), /سقف/);
+  assert.match(bad({}, { openPositions: 3 }), /سقف تنظیم‌شده ۳|سقف تنظیم‌شده 3/);
+  assert.match(bad({}, { openSymbols: ['BTCIRT'], openPositions: 1 }), /همین بازار/);
+  assert.match(bad({}, { tradesToday: 3, settings: { maxTradesPerDay: 3 } }), /سقف/);
   assert.match(bad({ stop_loss_pct: 5, take_profit_pct: 10 }, { balanceRials: 2_000_000 }), /حداقل سفارش/);
 });
 
-test('notional is capped by balance × leverage × 90% for tight stops', () => {
-  const p = buildPlan(idea({ stop_loss_pct: 0.6, take_profit_pct: 1.2 }), ctx()).plan;
-  assert.ok(p.notional <= 9_960_000 * 2 * 0.9 + 1);
+test('notional is capped by balance × leverage × 95% for tight stops', () => {
+  const p = buildPlan(idea({ stop_loss_pct: 0.4, take_profit_pct: 0.8 }), ctx()).plan;
+  assert.ok(p.notional <= 9_960_000 * 2 * 0.95 + 1);
   assert.equal(p.cappedByBalance, true);
 });
 
@@ -145,7 +155,7 @@ function fakeExchange(state = {}) {
     [(u) => u.includes('/market/udf/history'), () => ({ body: candles })],
     [(u) => u.includes('/v3/orderbook/'), () => ({ body: { status: 'ok', asks: [['11100000000', '1']], bids: [['11090000000', '1']], lastTradePrice: '11095000000' } })],
     [(u) => u.includes('/margin/orders/add'), (u, i) => { state.order = JSON.parse(i.body); state.opened = true; return { body: { status: 'ok', order: { id: 55 } } }; }],
-    [(u) => u.includes('/positions/list'), () => ({ body: { status: 'ok', positions: state.opened ? [{ id: 9, srcCurrency: 'btc', side: 'buy', liability: '0' }] : [] } })],
+    [(u) => u.includes('/positions/list'), () => ({ body: { status: 'ok', positions: state.opened ? [{ id: 9, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', liability: '0' }] : [] } })],
     [(u) => u.includes('/positions/9/close'), (u, i) => { state.close = JSON.parse(i.body); return { body: { status: 'ok', orders: [] } }; }],
   ]);
 }

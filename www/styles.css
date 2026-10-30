@@ -54,12 +54,12 @@ main { padding: 12px 16px calc(84px + env(safe-area-inset-bottom)); max-width: 6
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
 label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
-input, textarea {
+input, textarea, select {
   display: block; width: 100%; margin-top: 4px; padding: 10px 12px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
   color: var(--text); font: inherit; font-size: 15px;
 }
-input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 details summary { cursor: pointer; color: var(--accent); margin: 6px 0; }
 
 .btn {
@@ -86,8 +86,8 @@ details summary { cursor: pointer; color: var(--accent); margin: 6px 0; }
 .side.short { background: rgba(240, 89, 107, 0.15); color: var(--short); }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin: 12px 0; }
 .grid div { display: flex; flex-direction: column; }
-.grid span:first-child { font-size: 12px; color: var(--muted); }
-.grid span:last-child { font-weight: 600; }
+.grid > div > span:first-child { font-size: 12px; color: var(--muted); }
+.grid > div > span:last-child { font-weight: 600; }
 .pos { color: var(--long); }
 .neg { color: var(--short); }
 .note { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-top: 8px; }
@@ -142,3 +142,11 @@ ul.reasons { margin: 6px 0 0; padding-right: 18px; }
 label.check { display: flex; align-items: flex-start; gap: 10px; color: var(--text); font-size: 15px; }
 label.check input { display: inline-block; width: 22px; height: 22px; margin: 4px 0 0; flex: none; accent-color: var(--accent); }
 .src { font-size: 12px; color: var(--accent); }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.two label { display: flex; flex-direction: column; justify-content: space-between; }
+@media (max-width: 360px) { .two { grid-template-columns: 1fr; } }
+.age { font-size: 12px; color: var(--warn); }
+.pnl-big { font-size: 20px; font-weight: 800; }
+.chip { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); margin-left: 4px; }
+.inline-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

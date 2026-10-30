@@ -3,11 +3,12 @@
 // with strict JSON. Its answer is only an idea: risk.js decides if it is allowed.
 
 import { candlesFromUdf, summarize } from './indicators.js';
-import { LIMITS } from './risk.js';
+import { FIXED, RULES } from './risk.js';
 import { spreads } from './market.js';
-import { sleep } from './util.js';
+import { sleep, withTimeout } from './util.js';
 
 const REQUEST_GAP_MS = 150; // be gentle with Nobitex rate limits
+const AI_TIMEOUT_MS = 90_000;
 
 const TIMEFRAMES = [
   { key: '15m', res: '15' },
@@ -53,20 +54,24 @@ export async function buildSnapshot(api, candidates, spreadMap = {}, onProgress 
   return markets;
 }
 
-export function systemPrompt() {
+export function systemPrompt(rules = {}) {
+  const minRR = rules.minRewardRisk ?? RULES.minRewardRisk[2];
+  const maxSpread = rules.maxSpreadPct ?? RULES.maxSpreadPct[2];
   return [
-    'You are a cautious crypto margin-trading analyst for a small retail account on the Iranian exchange Nobitex (rial/toman markets).',
-    'You receive indicator summaries (percent-based, computed from real candles) for a few liquid markets on 15m, 1h and 4h timeframes.',
-    'Task: decide whether there is ONE clear, high-quality trade setup for the next few hours to ~2 days, or none.',
+    'You are a crypto margin-trading analyst for a small retail account on the Iranian exchange Nobitex (rial/toman markets).',
+    'You receive indicator summaries (percent-based, computed from real candles) for liquid markets on 15m, 1h and 4h timeframes.',
+    'Task: find the single BEST trade setup (long or short) for the next few hours to ~2 days among these markets.',
     'Rules:',
-    '- "no_trade" is a valid and frequently correct answer. Choose it when signals conflict, the trend is unclear, or volatility is extreme.',
-    '- Prefer trading WITH the higher-timeframe (4h/1h) trend; avoid shorting strong uptrends and longing strong downtrends.',
+    '- Look at every market. If at least one has a reasonable setup, return it as "trade" with an honest confidence.',
+    '- Use "no_trade" only when no market has an acceptable setup (e.g. everything is choppy or signals conflict everywhere).',
+    '- Shorts are as valid as longs: in a falling or overextended market, look for short setups.',
+    '- Prefer trading with the higher-timeframe (4h/1h) trend, or clear reversals with confirmation.',
     '- Only use markets from the list, and only sides marked as allowed.',
-    `- Avoid markets with spread_pct above ${LIMITS.MAX_SPREAD_PCT}; smaller, low-volume coins move erratically, so demand a cleaner setup there.`,
-    `- stop_loss_pct must be between ${LIMITS.MIN_STOP_PCT} and ${LIMITS.MAX_STOP_PCT}, placed beyond normal noise (consider atr14_pct on 15m and 1h).`,
-    `- take_profit_pct must be at least ${LIMITS.MIN_REWARD_RISK} x stop_loss_pct and realistic versus recent ranges (dist_to_50c_high/low).`,
+    `- Avoid markets with spread_pct above ${maxSpread}.`,
+    `- stop_loss_pct must be between ${FIXED.MIN_STOP_PCT} and ${FIXED.MAX_STOP_PCT}, placed beyond normal noise (consider atr14_pct on 15m and 1h).`,
+    `- take_profit_pct must be at least ${minRR} x stop_loss_pct and realistic versus recent ranges (dist_to_50c_high/low).`,
     '- Percentages are distances from the current price.',
-    '- confidence is 0-100; be honest and calibrated, most setups deserve 50-70.',
+    '- confidence is 0-100 and must be calibrated: it is the probability you assign to hitting the target before the stop.',
     'Answer ONLY with a JSON object, no markdown:',
     '{"decision":"trade"|"no_trade","symbol":"BTCIRT","side":"long"|"short","stop_loss_pct":1.5,"take_profit_pct":3.0,"confidence":62,"holding_hours":24,',
     '"reasoning_fa":"2-4 short sentences in Persian explaining the setup","risks_fa":"1-2 short sentences in Persian on what would invalidate it",',
@@ -125,16 +130,21 @@ export async function askModel({ baseUrl, apiKey, model, fetchFn }, system, user
   };
   const send = async (body) => {
     let res;
+    let text;
     try {
-      res = await f(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify(body),
-      });
+      res = await withTimeout(
+        f(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify(body),
+        }),
+        AI_TIMEOUT_MS,
+        'پاسخ سرویس هوش مصنوعی بیش از حد طول کشید',
+      );
+      text = await res.text();
     } catch (e) {
       throw new Error('اتصال به سرویس هوش مصنوعی برقرار نشد: ' + (e && e.message ? e.message : e));
     }
-    const text = await res.text();
     let data;
     try {
       data = JSON.parse(text);
@@ -157,16 +167,17 @@ export async function askModel({ baseUrl, apiKey, model, fetchFn }, system, user
  * Full analysis pipeline shared by the app and the background runner.
  * ai: { baseUrl, apiKey, model, fetchFn? }
  */
-export async function runAnalysis(api, market, ai, n, onProgress = () => {}) {
+export async function runAnalysis(api, market, ai, n, onProgress = () => {}, rules = {}) {
   onProgress('markets');
   await market.load();
-  const cands = market.candidates(n);
-  if (!cands.length) throw new Error('بازار تعهدی فعالی با حجم کافی پیدا نشد');
+  const exclude = new Set((rules.exclude || []).map((x) => String(x).toUpperCase()));
+  const cands = market.candidates(n + exclude.size, rules.minVolumeRials).filter((c) => !exclude.has(c.symbol)).slice(0, n);
+  if (!cands.length) throw new Error('بازار تعهدی فعالی با حجم کافی پیدا نشد (حداقل حجم را در تنظیمات کم کنید)');
   const sp = await spreads(api);
   const snapshot = await buildSnapshot(api, cands, sp, (i, total) => onProgress('candles', i, total));
   if (!snapshot.length) throw new Error('داده کندل دریافت نشد');
   onProgress('ai');
-  const raw = await askModel(ai, systemPrompt(), userPrompt(snapshot));
+  const raw = await askModel(ai, systemPrompt(rules), userPrompt(snapshot));
   const idea = normalizeIdea(raw, snapshot);
   const m = snapshot.find((x) => x.symbol === idea.symbol);
   return {

@@ -7,7 +7,7 @@
 import { Nobitex } from './nobitex.js';
 import { MarketInfo } from './market.js';
 import { runAnalysis } from './ai.js';
-import { ideaLooksValid } from './risk.js';
+import { ideaLooksValid, scanRules } from './risk.js';
 
 const KV_CONFIG = 'bg_config';
 const KV_LATEST = 'bg_latest';
@@ -41,11 +41,14 @@ async function backgroundCheck(now) {
   }
   const api = new Nobitex({ fetchFn: (u, o) => fetch(u, o) });
   const market = new MarketInfo(api);
+  const rules = scanRules(cfg.rules || {}, cfg.exclude || []);
   const res = await runAnalysis(
     api,
     market,
     { baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiKey, model: cfg.aiModel },
     cfg.candidates || 10,
+    () => {},
+    rules,
   );
   const finding = {
     at: now,
@@ -55,7 +58,7 @@ async function backgroundCheck(now) {
     scanned: res.scanned,
     notified: false,
   };
-  if (ideaLooksValid(res.idea, res.spreadPct)) {
+  if (ideaLooksValid(res.idea, res.spreadPct, rules)) {
     const last = kvGet(KV_LAST_NOTIFY);
     const repeat =
       last && last.symbol === res.idea.symbol && last.side === res.idea.side && now - last.at < SAME_IDEA_SILENCE_MS;
@@ -108,6 +111,8 @@ addEventListener('configure', (resolve, reject, args) => {
         aiModel: String(cfg.aiModel || ''),
         aiKey: String(cfg.aiKey || ''),
         candidates: Number(cfg.candidates) || 10,
+        rules: cfg.rules && typeof cfg.rules === 'object' ? cfg.rules : {},
+        exclude: Array.isArray(cfg.exclude) ? cfg.exclude.map(String) : [],
       });
     }
     resolve({ ok: true });

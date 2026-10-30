@@ -69,5 +69,5 @@ export function stats(entries) {
 export function tradesToday(entries, mode, now = Date.now()) {
   const d = new Date(now);
   const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  return entries.filter((e) => e.mode === mode && e.openedAt && e.openedAt >= startOfDay).length;
+  return entries.filter((e) => e.mode === mode && e.source !== 'external' && e.openedAt && e.openedAt >= startOfDay).length;
 }

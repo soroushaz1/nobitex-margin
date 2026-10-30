@@ -15,9 +15,9 @@ const FALLBACK_AMOUNT_STEP = {
   ADAIRT: 1,
 };
 
-export const MAX_CANDIDATES = 15;
-// Markets with less than ~1 billion toman daily volume are skipped (wide spreads, easy to move).
-export const MIN_VOLUME_RIALS = 10_000_000_000;
+export const MAX_CANDIDATES = 20;
+// Default: markets with less than ~0.5 billion toman daily volume are skipped (adjustable in settings).
+export const MIN_VOLUME_RIALS = 5_000_000_000;
 
 /** Best ask/bid from an orderbook regardless of sort order. */
 export function bestOf(book) {
@@ -95,15 +95,16 @@ export class MarketInfo {
   }
 
   /** Most liquid tradable rial margin markets (skips thin markets). */
-  candidates(n = 10) {
+  candidates(n = 10, minVolumeRials = MIN_VOLUME_RIALS) {
+    const minVol = Number.isFinite(Number(minVolumeRials)) ? Number(minVolumeRials) : MIN_VOLUME_RIALS;
     const rows = Object.entries(this.markets)
       .map(([symbol, m]) => {
         const s = this.statFor(m.src);
         return { symbol, ...m, volume: s ? Number(s.volumeDst) || 0 : 0, closed: s ? !!s.isClosed : false };
       })
-      .filter((x) => !x.closed && (x.buyEnabled || x.sellEnabled) && x.volume >= MIN_VOLUME_RIALS);
+      .filter((x) => !x.closed && (x.buyEnabled || x.sellEnabled) && x.volume > 0 && x.volume >= minVol);
     rows.sort((a, b) => b.volume - a.volume);
-    return rows.slice(0, Math.min(Math.max(Math.round(n) || 10, 3), MAX_CANDIDATES));
+    return rows.slice(0, Math.min(Math.max(Math.round(n) || 10, 1), MAX_CANDIDATES + 10));
   }
 
   precision(symbol) {

@@ -85,3 +85,14 @@ export function hexToBytes(hex) {
 export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+/** Reject if `promise` does not settle within `ms`. */
+export function withTimeout(promise, ms, message = 'زمان درخواست تمام شد') {
+  let t;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      t = setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]).finally(() => clearTimeout(t));
+}

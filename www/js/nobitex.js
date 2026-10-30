@@ -4,14 +4,39 @@
 // Environment-agnostic: `fetchFn` and `nacl` are injected so the same code runs in the
 // Android WebView (native HTTP via CapacitorHttp) and in Node tests.
 
-import { b64AnyToBytes, hexToBytes, bytesToB64 } from './util.js';
+import { b64AnyToBytes, hexToBytes, bytesToB64, withTimeout } from './util.js';
 
 export const BASE_URL = 'https://apiv2.nobitex.ir';
 export const USER_AGENT = 'TraderBot/DastyarTaahodi';
 const CLOCK_RESYNC_MS = 10 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 20_000;
+
+// Common Nobitex error codes/messages → Persian explanation.
+const ERROR_FA = [
+  [/InsufficientBalance|Insufficient Balance|not enough balance/i, 'موجودی کافی نیست'],
+  [/SmallOrder|minimum order|too small/i, 'مبلغ سفارش از حداقل مجاز نوبیتکس کمتر است'],
+  [/LargeOrder|OverValueOrder|too large|exceeds.*limit|DelegationLimit|delegation/i, 'حجم سفارش از سقف مجاز (سقف واگذاری/اعتبار) بیشتر است'],
+  [/MarketClosed|market is closed|TradingUnavailable|MarketUnavailable/i, 'این بازار فعلاً بسته یا غیرفعال است'],
+  [/InvalidLeverage|leverage/i, 'اهرم برای این بازار مجاز نیست'],
+  [/BadPrice|InvalidPrice|price/i, 'قیمت سفارش قابل قبول نیست'],
+  [/PositionNotFound|position.*not found/i, 'پوزیشن پیدا نشد (شاید بسته شده باشد)'],
+  [/amount.*(exceed|more than)|InvalidAmount|ExceedLiability|liability/i, 'مقدار سفارش با مقدار پوزیشن (یا سفارش‌های باز آن) جور نیست'],
+  [/PermissionDenied|permission|Forbidden|not allowed/i, 'کلید API دسترسی لازم را ندارد'],
+  [/TooManyRequests|rate limit|throttl/i, 'تعداد درخواست‌ها زیاد بود؛ چند ثانیه بعد دوباره امتحان کنید'],
+  [/InvalidSignature|signature/i, 'امضای درخواست نامعتبر است (کلید خصوصی را بررسی کنید)'],
+  [/InvalidApiKey|api ?key|Invalid token|Unauthorized/i, 'کلید API نامعتبر یا منقضی است'],
+];
+
+export function translateError(msg, code, status) {
+  const text = `${code || ''} ${msg || ''}`;
+  for (const [re, fa] of ERROR_FA) if (re.test(text)) return `${fa} (${msg || code})`;
+  if (status === 429) return `تعداد درخواست‌ها زیاد بود (${msg || code})`;
+  return String(msg || code || `HTTP ${status}`);
+}
 
 function isTimestampError(e) {
-  return /timestamp/i.test(String((e && e.message) || '')) || /timestamp/i.test(String((e && e.code) || ''));
+  const t = `${(e && e.raw) || ''} ${(e && e.message) || ''} ${(e && e.code) || ''}`;
+  return /timestamp/i.test(t);
 }
 
 /**
@@ -74,7 +99,8 @@ function buildQuery(params) {
 }
 
 export class Nobitex {
-  constructor({ apiKey, privateKey, fetchFn, nacl, baseUrl = BASE_URL, now = () => Date.now() } = {}) {
+  constructor({ apiKey, privateKey, fetchFn, nacl, baseUrl = BASE_URL, now = () => Date.now(), timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+    this.timeoutMs = timeoutMs;
     this.apiKey = apiKey ? String(apiKey).trim() : '';
     this.nacl = nacl;
     this.fetch = fetchFn || ((...a) => fetch(...a));
@@ -133,18 +159,19 @@ export class Nobitex {
     if (rawBody) headers['Content-Type'] = 'application/json';
     if (auth) Object.assign(headers, this.signHeaders(method, fullPath, rawBody));
     let res;
+    let text;
     try {
-      res = await this.fetch(this.baseUrl + fullPath, {
-        method,
-        headers,
-        body: rawBody || undefined,
-      });
+      res = await withTimeout(
+        this.fetch(this.baseUrl + fullPath, { method, headers, body: rawBody || undefined }),
+        this.timeoutMs,
+        'پاسخ نوبیتکس بیش از حد طول کشید',
+      );
+      text = await res.text();
     } catch (e) {
       throw new NobitexError('اتصال به نوبیتکس برقرار نشد: ' + (e && e.message ? e.message : e));
     }
     this.learnClock(res);
     let data;
-    const text = await res.text();
     try {
       data = text ? JSON.parse(text) : {};
     } catch {
@@ -152,8 +179,14 @@ export class Nobitex {
     }
     const failed = !res.ok || (data && data.status === 'failed') || (data && data.s === 'error');
     if (failed) {
-      const msg = (data && (data.message || data.detail || data.errmsg || data.code)) || `HTTP ${res.status}`;
-      throw new NobitexError(String(msg), { status: res.status, code: data && data.code, body: data });
+      const raw = (data && (data.message || data.detail || data.errmsg || data.code)) || `HTTP ${res.status}`;
+      const err = new NobitexError(translateError(String(raw), data && data.code, res.status), {
+        status: res.status,
+        code: data && data.code,
+        body: data,
+      });
+      err.raw = String(raw);
+      throw err;
     }
     return data;
   }
@@ -284,6 +317,17 @@ export class Nobitex {
     if (stopLimitPrice !== undefined) body.stopLimitPrice = String(stopLimitPrice);
     if (mode) body.mode = mode;
     return this.request('POST', `/positions/${id}/close`, { body, auth: true });
+  }
+
+  /**
+   * Cancel all open margin orders of one market (e.g. the TP/SL OCO of a position)
+   * so the position's full amount is free to close or re-protect.
+   */
+  cancelMarketOrders(src, dst) {
+    return this.request('POST', '/market/orders/cancel-old', {
+      body: { srcCurrency: src, dstCurrency: dst, tradeType: 'margin' },
+      auth: true,
+    });
   }
 
   /** Cancel an open order (used to cancel an unfilled entry). */
