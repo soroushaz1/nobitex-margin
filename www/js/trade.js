@@ -45,17 +45,24 @@ export function positionAmounts(p, fallbackAmount, step, refPrice) {
   const expected = Number(p.collateral) * Number(p.leverage);
   const price = Number(refPrice) || Number(p.entryPrice);
   const out = [];
+  const rejected = [];
   for (const v of raw) {
     const n = Number(v);
     if (!(n > 0)) continue;
+    const a = floorToStep(n, step);
+    if (!(Number(a) > 0) || out.includes(a) || rejected.includes(a)) continue;
     if (expected > 0 && price > 0) {
       const ratio = (n * price) / expected;
-      if (ratio < 0.3 || ratio > 3) continue;
+      if (ratio < 0.3 || ratio > 3) {
+        rejected.push(a);
+        continue;
+      }
     }
-    const a = floorToStep(n, step);
-    if (Number(a) > 0 && !out.includes(a)) out.push(a);
+    out.push(a);
   }
-  return out;
+  // If the size check rejected everything, the exchange fields may mean something else
+  // (e.g. collateral reported differently) — still try the raw values rather than give up.
+  return out.length ? out : rejected;
 }
 
 /** Unrealized profit in rials (exchange value if given, else computed from the book). */
@@ -82,15 +89,69 @@ async function refetch(api, p) {
   }
 }
 
-/** Cancel the market's open margin orders (frees amounts locked in a TP/SL). */
-export async function freePosition(api, p) {
+function isOpenOrder(o) {
+  return !/done|cancel|close|filled|reject|expire/i.test(String(o.status || ''));
+}
+
+function sameMarket(o, src, dst) {
+  const os = String(o.srcCurrency || src).toLowerCase();
+  const od = String(o.dstCurrency || dst).toLowerCase();
+  const margin = !o.tradeType || /margin/i.test(String(o.tradeType));
+  return os === src && od === dst && margin;
+}
+
+/** Open margin orders of one market (never touches spot orders). */
+export async function openMarginOrders(api, src, dst) {
+  const d = await api.ordersList({ status: 'open', tradeType: 'margin', srcCurrency: src, dstCurrency: dst });
+  return (d.orders || []).filter((o) => sameMarket(o, src, dst) && isOpenOrder(o));
+}
+
+/**
+ * Cancel every open margin order of the position's market (TP/SL legs lock the amount).
+ * The bulk endpoint skips stop orders that have not triggered yet, so each remaining
+ * order is also cancelled one by one. Returns the refreshed position.
+ */
+export async function freePosition(api, p, log = () => {}) {
+  const src = String(p.srcCurrency).toLowerCase();
+  const dst = String(p.dstCurrency || 'rls').toLowerCase();
   try {
-    await api.cancelMarketOrders(String(p.srcCurrency).toLowerCase(), String(p.dstCurrency || 'rls').toLowerCase());
+    await api.cancelMarketOrders(src, dst);
+    log('لغو گروهی سفارش‌های این بازار: انجام شد');
+  } catch (e) {
+    log('لغو گروهی سفارش‌ها: ' + e.message);
+  }
+  for (let round = 0; round < 3; round++) {
+    let orders;
+    try {
+      orders = await openMarginOrders(api, src, dst);
+    } catch (e) {
+      log('دریافت فهرست سفارش‌های باز ناموفق: ' + e.message);
+      break;
+    }
+    if (!orders.length) {
+      log('سفارش باز دیگری در این بازار نمانده');
+      break;
+    }
+    for (const o of orders) {
+      try {
+        await api.cancelOrder(o.id);
+        log(`لغو سفارش ${o.id} (${o.execution || ''} ${o.type || ''}): انجام شد`);
+      } catch (e) {
+        log(`لغو سفارش ${o.id}: ${e.message}`);
+      }
+    }
     await sleep(1200);
-  } catch {
-    /* nothing to cancel, or not supported — the close attempt will tell */
   }
   return refetch(api, p);
+}
+
+async function isStillOpen(api, id) {
+  try {
+    const list = await activePositions(api);
+    return list.some((x) => String(x.id) === String(id));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -154,7 +215,7 @@ export async function protectPosition(api, position, prices, fallbackAmount, pre
   let p = position;
   if (cancelFirst) {
     log('لغو سفارش‌های قبلی این بازار…');
-    p = await freePosition(api, p);
+    p = await freePosition(api, p, log);
   }
   const amounts = positionAmounts(p, fallbackAmount, precision.amountStep, prices.tpPrice).slice(0, 3);
   if (!amounts.length) {
@@ -181,22 +242,62 @@ export async function protectPosition(api, position, prices, fallbackAmount, pre
   return false;
 }
 
-/** Close a whole position now: cancel its TP/SL, then a market order with a price bound. */
-export async function closeNow(api, position, precision, fallbackAmount) {
-  const p = await freePosition(api, position);
+/**
+ * Close a whole position now: cancel its TP/SL, then a market order with a price bound
+ * (falling back to an aggressive limit order), then verify that the position is gone.
+ * Returns { closed: true|false|null, log: [...] }. Throws (with .log) if no close order
+ * could be placed.
+ */
+export async function closeNow(api, position, precision, fallbackAmount, onLog = () => {}) {
+  const steps = [];
+  const log = (t) => {
+    steps.push(t);
+    onLog(t);
+  };
+  const p = await freePosition(api, position, log);
   const side = positionSide(p) || 'long';
   const best = await currentBest(api, positionSymbol(p));
-  // closing a long = selling (bound below bid), closing a short = buying (bound above ask)
-  const bound = boundedMarketPrice(side === 'long' ? 'short' : 'long', best.ask, best.bid, precision.priceStep, 0.5);
-  const amounts = positionAmounts(p, fallbackAmount, precision.amountStep, (best.ask + best.bid) / 2).slice(0, 3);
-  if (!amounts.length) throw new Error('مقدار پوزیشن مشخص نیست؛ از اپ نوبیتکس ببندید');
+  const mid = (best.ask + best.bid) / 2;
+  // closing a long = selling (price below bid), closing a short = buying (price above ask)
+  const closeAs = side === 'long' ? 'short' : 'long';
+  const marketBound = boundedMarketPrice(closeAs, best.ask, best.bid, precision.priceStep, 0.5);
+  const limitPrice = boundedMarketPrice(closeAs, best.ask, best.bid, precision.priceStep, 1);
+  const amounts = positionAmounts(p, fallbackAmount, precision.amountStep, mid).slice(0, 3);
+  log(`جهت: ${side === 'long' ? 'لانگ' : 'شورت'} · مقدارهای قابل امتحان: ${amounts.join('، ') || '—'}`);
+  if (!amounts.length) {
+    const err = new Error('مقدار پوزیشن مشخص نیست؛ از اپ نوبیتکس ببندید');
+    err.log = steps;
+    throw err;
+  }
+  const attempts = [];
+  for (const amount of amounts) attempts.push({ amount, execution: 'market', price: marketBound });
+  attempts.push({ amount: amounts[0], execution: 'limit', price: limitPrice });
+  let placed = false;
   let lastErr = null;
-  for (const amount of amounts) {
+  for (const a of attempts.slice(0, 5)) {
     try {
-      return await api.closePosition(p.id, { amount, price: bound, execution: 'market' });
+      await api.closePosition(p.id, a.execution === 'market' ? a : { amount: a.amount, price: a.price });
+      log(`سفارش بستن (${a.execution === 'market' ? 'بازار' : 'محدود'}، مقدار ${a.amount}) ثبت شد`);
+      placed = true;
+      break;
     } catch (e) {
       lastErr = e;
+      log(`بستن (${a.execution === 'market' ? 'بازار' : 'محدود'}، مقدار ${a.amount}) رد شد: ${e.message}`);
     }
   }
-  throw lastErr;
+  if (!placed) {
+    const err = new Error(lastErr ? lastErr.message : 'سفارش بستن ثبت نشد');
+    err.log = steps;
+    throw err;
+  }
+  for (let i = 0; i < 6; i++) {
+    await sleep(1500);
+    const open = await isStillOpen(api, p.id);
+    if (open === false) {
+      log('پوزیشن بسته شد ✓');
+      return { closed: true, log: steps };
+    }
+  }
+  log('سفارش بستن ثبت شده ولی پوزیشن هنوز در فهرست پوزیشن‌های باز است');
+  return { closed: false, log: steps };
 }

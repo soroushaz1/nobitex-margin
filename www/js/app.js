@@ -859,6 +859,7 @@ async function renderPositions() {
             <button class="btn ghost" data-protect="${esc(p.id)}">${unprotected ? 'ثبت حد سود/ضرر' : 'تغییر حد سود/ضرر'}</button>
             <button class="btn danger" data-close="${esc(p.id)}">بستن فوری</button>
           </div>
+          <button class="btn ghost small" data-debug="${esc(p.id)}">جزئیات فنی</button>
         </div>`;
       })
       .join('');
@@ -866,6 +867,7 @@ async function renderPositions() {
     box.querySelectorAll('[data-protect]').forEach(
       (b) => (b.onclick = () => editProtection(list.find((p) => String(p.id) === b.dataset.protect), books)),
     );
+    box.querySelectorAll('[data-debug]').forEach((b) => (b.onclick = () => showDebug(list.find((p) => String(p.id) === b.dataset.debug))));
   } catch (e) {
     box.innerHTML = `<div class="card note bad small">${esc(e.message)}</div>`;
   }
@@ -944,27 +946,99 @@ async function closePaper(id) {
   }
 }
 
+function logHtml(lines) {
+  return `<pre id="close-log" dir="rtl" style="font-family:inherit;font-size:13px;line-height:1.8;white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto;background:var(--surface-2);padding:10px;border-radius:10px;margin:0">${esc(
+    lines.join('\n'),
+  )}</pre>`;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('کپی شد');
+  } catch {
+    toast('کپی نشد؛ از صفحه عکس بگیرید', true);
+  }
+}
+
 async function closeLive(p) {
   if (!p) return;
   const symbol = positionSymbol(p);
   const ok = await modal(
-    `<h2 style="margin-top:0;color:var(--text)">بستن فوری ${esc(symbol)}</h2><p>ابتدا سفارش‌های حد سود/ضرر این بازار لغو می‌شوند، بعد پوزیشن با قیمت بازار (حداکثر لغزش ۰٫۵٪) بسته می‌شود.</p>`,
+    `<h2 style="margin-top:0;color:var(--text)">بستن فوری ${esc(symbol)}</h2><p>ابتدا سفارش‌های حد سود/ضرر این بازار لغو می‌شوند، بعد پوزیشن با قیمت بازار (حداکثر لغزش ۰٫۵٪) بسته می‌شود و برنامه بررسی می‌کند که واقعاً بسته شده باشد.</p>`,
     { okText: 'بستن', okClass: 'short', countdown: 1 },
   );
   if (!ok) return;
   const entry = state.journal.find((e) => e.mode === 'live' && e.positionId === p.id);
+  const lines = [`بستن ${symbol} — پوزیشن ${p.id}`];
+  // live progress in the modal
+  $('modal-body').innerHTML = `<h2 style="margin-top:0;color:var(--text)"><span class="spin"></span>در حال بستن ${esc(symbol)}…</h2>${logHtml(lines)}`;
+  $('modal-ok').hidden = true;
+  $('modal-cancel').hidden = true;
+  $('modal').hidden = false;
+  const onLog = (t) => {
+    lines.push('• ' + t);
+    const el = $('close-log');
+    if (el) {
+      el.textContent = lines.join('\n');
+      el.scrollTop = el.scrollHeight;
+    }
+  };
+  state.busy = true;
+  let title;
+  let color;
   try {
-    toast('در حال بستن…');
     await ensureMarket();
-    await closeNow(state.api, p, state.market.precision(symbol), entry && entry.amount);
-    toast('دستور بستن ثبت شد ✓');
-    setTimeout(() => {
-      renderPositions();
-      refreshBalance();
-    }, 2500);
+    const res = await closeNow(state.api, p, state.market.precision(symbol), entry && entry.amount, onLog);
+    if (res.closed) {
+      title = 'پوزیشن بسته شد ✓';
+      color = 'var(--long)';
+    } else {
+      title = 'سفارش بستن ثبت شد، ولی پوزیشن هنوز باز است';
+      color = 'var(--warn)';
+      lines.push('', 'اپ نوبیتکس را چک کنید. اگر پوزیشن باز ماند، از همان‌جا ببندید و این گزارش را بفرستید.');
+    }
   } catch (e) {
-    toast('بستن ناموفق: ' + e.message, true);
+    if (e.log && e.log.length && !lines.includes('• ' + e.log[e.log.length - 1])) e.log.forEach((t) => lines.push('• ' + t));
+    lines.push('', 'خطا: ' + e.message);
+    title = 'بستن ناموفق بود';
+    color = 'var(--short)';
+  } finally {
+    state.busy = false;
+    $('modal-ok').hidden = false;
+    $('modal-cancel').hidden = false;
+    $('modal').hidden = true;
   }
+  const report = lines.join('\n');
+  const copy = await modal(`<h2 style="margin-top:0;color:${color}">${esc(title)}</h2>${logHtml(lines)}`, {
+    okText: 'بستن پنجره',
+    cancelText: 'کپی گزارش',
+  });
+  if (!copy) copyText(report);
+  renderPositions();
+  refreshBalance();
+}
+
+/** Raw position + open orders, for troubleshooting with the exchange's real data. */
+async function showDebug(p) {
+  if (!p) return;
+  const src = String(p.srcCurrency).toLowerCase();
+  const dst = String(p.dstCurrency || 'rls').toLowerCase();
+  let orders = 'در حال دریافت…';
+  try {
+    const d = await state.api.ordersList({ status: 'open', tradeType: 'margin', srcCurrency: src, dstCurrency: dst });
+    orders = JSON.stringify(d.orders || d, null, 1);
+  } catch (e) {
+    orders = 'خطا: ' + e.message;
+  }
+  const text = `POSITION\n${JSON.stringify(p, null, 1)}\n\nOPEN ORDERS\n${orders}`;
+  const copy = await modal(
+    `<h2 style="margin-top:0;color:var(--text)">جزئیات فنی ${esc(positionSymbol(p))}</h2><pre class="mono" dir="ltr" style="max-height:55vh;overflow:auto;background:var(--surface-2);padding:10px;border-radius:10px;text-align:left">${esc(
+      text,
+    )}</pre>`,
+    { okText: 'بستن پنجره', cancelText: 'کپی' },
+  );
+  if (!copy) copyText(text);
 }
 
 /** Set or change TP/SL of any open position. */

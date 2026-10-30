@@ -334,4 +334,9 @@ export class Nobitex {
   cancelOrder(id) {
     return this.request('POST', '/market/orders/update-status', { body: { order: id, status: 'canceled' }, auth: true });
   }
+
+  /** Your orders, e.g. { status: 'open', tradeType: 'margin', srcCurrency, dstCurrency }. */
+  ordersList(params = {}) {
+    return this.request('GET', '/market/orders/list', { params: { details: 2, ...params }, auth: true });
+  }
 }

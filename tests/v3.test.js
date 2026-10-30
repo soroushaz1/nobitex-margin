@@ -79,6 +79,8 @@ test('position amounts: long uses totalAsset (coin), short uses liability; wrong
   assert.equal(positionAmounts(short, '0.000956', 0.000001)[0], '0.000957');
   // a rial value in a coin field is rejected by the size sanity check
   assert.deepEqual(positionAmounts({ ...long, totalAsset: '10500000' }, '0.000956', 0.000001), ['0.000956', '0.000951']);
+  // if the size check rejects everything, the raw values are still tried
+  assert.deepEqual(positionAmounts({ side: 'buy', totalAsset: '0.5', collateral: '1', leverage: '1', entryPrice: '16000000' }, null, 0.000001), ['0.500000']);
   assert.equal(positionSymbol({ srcCurrency: 'hype', dstCurrency: 'rls' }), 'HYPEIRT');
 });
 
@@ -89,16 +91,39 @@ test('position PnL: exchange value preferred, else computed from the book', () =
 });
 
 function exchange(state) {
+  state.openOrders = state.openOrders || [];
   return mockFetch([
     [(u) => u.includes('/v3/orderbook/'), () => ({ body: { status: 'ok', asks: [['11010000000', '1']], bids: [['11000000000', '1']] } })],
-    [(u) => u.includes('/market/orders/cancel-old'), (u, i) => { state.cancelled = JSON.parse(i.body); state.order.push('cancel'); return { body: { status: 'ok' } }; }],
+    [(u) => u.includes('/market/orders/cancel-old'), (u, i) => {
+      state.cancelled = JSON.parse(i.body);
+      state.order.push('cancel');
+      // like Nobitex: only ACTIVE orders are cancelled; untriggered stop orders stay
+      state.openOrders = state.openOrders.filter((o) => o.status !== 'Active');
+      return { body: { status: 'ok' } };
+    }],
+    [(u) => u.includes('/market/orders/list'), (u) => {
+      state.listQuery = u;
+      return { body: { status: 'ok', orders: state.openOrders } };
+    }],
+    [(u) => u.includes('/market/orders/update-status'), (u, i) => {
+      const b = JSON.parse(i.body);
+      state.order.push('cancel-' + b.order);
+      state.openOrders = state.openOrders.filter((o) => o.id !== b.order);
+      return { body: { status: 'ok', updatedStatus: 'Canceled' } };
+    }],
     [(u) => u.includes('/positions/list'), () => ({ body: { status: 'ok', positions: state.positions } })],
     [(u) => /\/positions\/\d+\/status/.test(u), (u) => ({ body: { status: 'ok', position: state.positions.find((p) => u.includes(`/positions/${p.id}/`)) } })],
     [(u) => /\/positions\/\d+\/close/.test(u), (u, i) => {
       const b = JSON.parse(i.body);
       state.order.push('close');
       state.closes.push(b);
+      if (state.openOrders.some((o) => o.tradeType === 'Margin' && o.srcCurrency === 'btc'))
+        return { status: 400, body: { status: 'failed', code: 'ExceedLiability', message: 'amount exceeds available (locked in orders)' } };
       if (state.rejectFirstClose && state.closes.length === 1) return { status: 400, body: { status: 'failed', code: 'ExceedLiability', message: 'amount exceeds' } };
+      if (b.execution === 'market' && !state.neverFill) {
+        const id = Number(u.match(/positions\/(\d+)\/close/)[1]);
+        state.positions = state.positions.filter((p) => p.id !== id);
+      }
       return { body: { status: 'ok' } };
     }],
     [(u) => u.includes('/margin/orders/add'), (u, i) => {
@@ -109,15 +134,65 @@ function exchange(state) {
   ]);
 }
 
-test('close now on a LONG: cancels TP/SL first, then market-closes the coin amount', async () => {
-  const state = { order: [], closes: [], positions: [{ id: 77, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', totalAsset: '0.000950', liability: '5400000', collateral: '5400000', leverage: '2' }] };
+async function fastTimers(fn) {
+  const real = globalThis.setTimeout;
+  globalThis.setTimeout = (f) => real(f, 0);
+  try {
+    return await fn();
+  } finally {
+    globalThis.setTimeout = real;
+  }
+}
+
+test('close now on a LONG: cancels TP/SL first (incl. untriggered stop leg), then market-closes and verifies', async () => {
+  const state = {
+    order: [],
+    closes: [],
+    positions: [{ id: 77, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', totalAsset: '0.000950', liability: '5400000', collateral: '5400000', leverage: '2' }],
+    openOrders: [
+      { id: 501, status: 'Active', execution: 'Limit', type: 'sell', tradeType: 'Margin', srcCurrency: 'btc', dstCurrency: 'rls' },
+      { id: 502, status: 'Inactive', execution: 'StopLimit', type: 'sell', tradeType: 'Margin', srcCurrency: 'btc', dstCurrency: 'rls' },
+      { id: 900, status: 'Inactive', execution: 'StopLimit', type: 'buy', tradeType: 'Spot', srcCurrency: 'btc', dstCurrency: 'rls' },
+    ],
+  };
   const api = new Nobitex({ apiKey: 'K', privateKey: pem, nacl, fetchFn: exchange(state) });
-  await closeNow(api, state.positions[0], PREC, '0.000956');
-  assert.deepEqual(state.order, ['cancel', 'close']);
-  assert.deepEqual(state.cancelled, { srcCurrency: 'btc', dstCurrency: 'rls', tradeType: 'margin' });
+  const lines = [];
+  const res = await fastTimers(() => closeNow(api, state.positions[0], PREC, '0.000956', (t) => lines.push(t)));
+  assert.equal(res.closed, true, lines.join('\n'));
+  assert.deepEqual(state.order.slice(0, 3), ['cancel', 'cancel-502', 'close'], 'stop leg cancelled one by one before closing');
+  assert.ok(!state.order.includes('cancel-900'), 'spot orders are never touched');
+  assert.match(state.listQuery, /status=open/);
+  assert.match(state.listQuery, /tradeType=margin/);
   assert.equal(state.closes[0].amount, '0.000950');
   assert.equal(state.closes[0].execution, 'market');
   assert.ok(Number(state.closes[0].price) < 11_000_000_000, 'sell bound below bid');
+  assert.ok(lines.some((l) => l.includes('بسته شد')));
+});
+
+test('close now: market rejected → aggressive limit fallback; unfilled close is reported, not hidden', async () => {
+  const state = { order: [], closes: [], neverFill: true, positions: [{ id: 8, srcCurrency: 'eth', dstCurrency: 'rls', side: 'sell', liability: '0.01', collateral: '2000000', leverage: '2', entryPrice: '400000000' }] };
+  const api = new Nobitex({ apiKey: 'K', privateKey: pem, nacl, fetchFn: exchange(state) });
+  const res = await fastTimers(() => closeNow(api, state.positions[0], { amountStep: 0.00001, priceStep: 10 }, null));
+  assert.equal(res.closed, false);
+  assert.ok(res.log.some((l) => l.includes('هنوز')));
+});
+
+test('close now: every attempt rejected → error carries the step log', async () => {
+  const state = {
+    order: [], closes: [],
+    positions: [{ id: 9, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', totalAsset: '0.001', collateral: '5500000', leverage: '2' }],
+    openOrders: [{ id: 7, status: 'Inactive', tradeType: 'Margin', srcCurrency: 'btc', dstCurrency: 'rls' }],
+  };
+  // cancel by id fails on this exchange, so the stop leg keeps locking the amount
+  const base = exchange(state);
+  const api = new Nobitex({
+    apiKey: 'K', privateKey: pem, nacl,
+    fetchFn: (u, i) => (u.includes('update-status') ? Promise.resolve({ ok: false, status: 400, headers: { get: () => null }, text: async () => '{"status":"failed","message":"cannot cancel"}' }) : base(u, i)),
+  });
+  const err = await fastTimers(() => closeNow(api, state.positions[0], PREC, null).then(() => null, (e) => e));
+  assert.ok(err, 'must throw');
+  assert.ok(err.log.some((l) => l.includes('cannot cancel')), err.log.join('\n'));
+  assert.ok(err.log.some((l) => l.includes('رد شد')));
 });
 
 test('changing TP/SL: cancels old orders, retries with the next amount if rejected', async () => {
@@ -126,7 +201,7 @@ test('changing TP/SL: cancels old orders, retries with the next amount if reject
   const prices = protectionPrices('short', 11_000_000_000, 2, 4, 10);
   assert.ok(prices.stopPrice > 11_000_000_000 && prices.tpPrice < 11_000_000_000 && prices.stopLimitPrice > prices.stopPrice);
   const warnings = [];
-  const ok = await protectPosition(api, state.positions[0], prices, '0.000958', PREC, () => {}, warnings, true);
+  const ok = await fastTimers(() => protectPosition(api, state.positions[0], prices, '0.000958', PREC, () => {}, warnings, true));
   assert.equal(ok, true, warnings.join());
   assert.equal(state.order[0], 'cancel');
   assert.equal(state.closes.length, 2);
@@ -138,17 +213,13 @@ test('opening a trade while another market has a position works; same market ref
   const state = { order: [], closes: [], positions: [{ id: 3, srcCurrency: 'hype', dstCurrency: 'rls', side: 'buy', totalAsset: '1', collateral: '1', leverage: '1' }] };
   const api = new Nobitex({ apiKey: 'K', privateKey: pem, nacl, fetchFn: exchange(state) });
   const plan = buildPlan(idea(), ctx({ openPositions: 1, openSymbols: ['HYPEIRT'] })).plan;
-  const realSetTimeout = globalThis.setTimeout;
-  globalThis.setTimeout = (fn) => realSetTimeout(fn, 0); // skip polling delays
-  try {
+  await fastTimers(async () => {
     const res = await executePlan(api, plan, PREC);
     assert.equal(res.positionId, 200);
     assert.equal(res.protectedOk, true);
     assert.equal(state.closes[0].amount, '0.000955', 'OCO uses the coin actually held');
     await assert.rejects(executePlan(api, plan, PREC), /همین بازار/);
-  } finally {
-    globalThis.setTimeout = realSetTimeout;
-  }
+  });
 });
 
 test('Nobitex errors are explained in Persian; hanging requests time out', async () => {
