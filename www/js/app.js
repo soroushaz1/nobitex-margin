@@ -164,11 +164,18 @@ function paperBalanceRials() {
   return { total: start + realized, free: start + realized - locked, locked };
 }
 
-/** Free balance usable for a new position, in rials. */
-async function freeBalanceRials() {
-  if (!isLive()) return paperBalanceRials().free;
+/** { free, equity } in rials: free = usable for new collateral; equity = whole margin account. */
+async function balances() {
+  if (!isLive()) {
+    const b = paperBalanceRials();
+    return { free: b.free, equity: b.total };
+  }
   const b = await state.api.marginBalanceRials();
-  return b.balance - (b.blocked || 0);
+  return { free: b.balance - (b.blocked || 0), equity: b.balance };
+}
+
+async function freeBalanceRials() {
+  return (await balances()).free;
 }
 
 async function refreshBalance() {
@@ -180,11 +187,13 @@ async function refreshBalance() {
       const b = await state.api.marginBalanceRials();
       const free = b.balance - (b.blocked || 0);
       state.lastBalance = free;
+      state.lastEquity = b.balance;
       $('balance').textContent = fmtToman(free) + ' تومان';
       $('balance-sub').textContent = b.blocked > 0 ? `در سفارش‌ها/پوزیشن‌ها: ${fmtToman(b.blocked)} تومان` : '';
     } else {
       const b = paperBalanceRials();
       state.lastBalance = b.free;
+      state.lastEquity = b.total;
       $('balance').textContent = fmtToman(b.free) + ' تومان';
       $('balance-sub').textContent = b.locked > 0 ? `وثیقه پوزیشن‌های آزمایشی: ${fmtToman(b.locked)} تومان` : '';
     }
@@ -540,11 +549,12 @@ async function planFor(idea, price, spreadPct) {
   const market = state.market.markets[idea.symbol];
   const precision = state.market.precision(idea.symbol);
   const open = await openState();
-  const balance = await freeBalanceRials();
+  const bal = await balances();
   const r = buildPlan(idea, {
     symbol: idea.symbol,
     price,
-    balanceRials: balance,
+    balanceRials: bal.free,
+    equityRials: bal.equity,
     market,
     ...precision,
     settings: state.settings,
@@ -1201,7 +1211,7 @@ const RISK_FIELDS = [
 ];
 
 function readRiskForm() {
-  const raw = {};
+  const raw = { sizing: $('s-sizing').value };
   for (const [id, key] of RISK_FIELDS) raw[key] = normalizeDigits($(id).value);
   return effectiveSettings(raw);
 }
@@ -1210,16 +1220,23 @@ function renderRiskPreview() {
   const el = $('risk-preview');
   if (!el || !$('s-lev')) return;
   const e = readRiskForm();
-  const bal = state.lastBalance;
-  const per = bal ? (bal * e.riskPct) / 100 : null;
+  const eq = state.lastEquity;
   const liq = 100 / e.leverage;
-  el.innerHTML = `با این تنظیمات: هر معامله در صورت خوردن حد ضرر حدود <b>${fmtPct(e.riskPct, 1)}</b> موجودی${
-    per ? ` (≈ ${fmtToman(per)} تومان)` : ''
-  } ضرر می‌دهد؛ تا <b>${toFaDigits(e.maxOpenPositions)}</b> پوزیشن هم‌زمان${
-    per && e.maxOpenPositions > 1 ? ` (بدترین حالت هم‌زمان ≈ ${fmtToman(per * e.maxOpenPositions)} تومان)` : ''
-  }؛ ${e.maxTradesPerDay ? `حداکثر ${toFaDigits(e.maxTradesPerDay)} معامله در روز` : 'بدون سقف روزانه'}. با اهرم ${toFaDigits(
-    e.leverage,
-  )}، حرکت حدود ${fmtPct(liq, 1)} خلاف جهت پوزیشن را لیکوئید می‌کند.`;
+  const tail = `؛ تا <b>${toFaDigits(e.maxOpenPositions)}</b> پوزیشن هم‌زمان؛ ${
+    e.maxTradesPerDay ? `حداکثر ${toFaDigits(e.maxTradesPerDay)} معامله در روز` : 'بدون سقف روزانه'
+  }. با اهرم ${toFaDigits(e.leverage)}، حرکت حدود ${fmtPct(liq, 1)} خلاف جهت پوزیشن را لیکوئید می‌کند.`;
+  if (e.sizing === 'equal') {
+    const coll = eq ? eq / e.maxOpenPositions : null;
+    const pos = coll ? coll * e.leverage : null;
+    el.innerHTML = `هر معامله: وثیقه <b>${coll ? fmtToman(coll) + ' تومان' : 'کل سرمایه ÷ ' + toFaDigits(e.maxOpenPositions)}</b>${
+      pos ? ` (ارزش پوزیشن ≈ ${fmtToman(pos)} تومان؛ با حد ضرر ۱٫۵٪ ضرر ≈ ${fmtToman(pos * 0.0185)} تومان، با ۴٪ ≈ ${fmtToman(pos * 0.0435)} تومان)` : ''
+    }. ضرر هر معامله به فاصله حد ضرر بستگی دارد${tail}`;
+  } else {
+    const per = eq ? (eq * e.riskPct) / 100 : null;
+    el.innerHTML = `هر معامله در صورت خوردن حد ضرر حدود <b>${fmtPct(e.riskPct, 1)}</b> کل سرمایه${
+      per ? ` (≈ ${fmtToman(per)} تومان)` : ''
+    } ضرر می‌دهد${per && e.maxOpenPositions > 1 ? ` (بدترین حالت هم‌زمان ≈ ${fmtToman(per * e.maxOpenPositions)} تومان)` : ''}${tail}`;
+  }
 }
 
 function fillSettingsForm() {
@@ -1227,6 +1244,7 @@ function fillSettingsForm() {
   const eff = effectiveSettings(s);
   $('s-paper').value = s.paperBalanceToman;
   for (const [id, key] of RISK_FIELDS) $(id).value = eff[key];
+  $('s-sizing').value = eff.sizing;
   $('s-ai-url').value = s.aiBaseUrl || '';
   $('s-ai-model').value = s.aiModel || '';
   $('s-ai-key').value = state.secrets.aiKey || '';
@@ -1395,6 +1413,7 @@ function init() {
   $('bg-enabled').onchange = (e) => toggleBackground(e.target.checked);
   $('bg-run').onclick = runBackgroundNow;
   for (const [id] of RISK_FIELDS) $(id).addEventListener('input', renderRiskPreview);
+  $('s-sizing').addEventListener('change', renderRiskPreview);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) state.hiddenAt = Date.now();
     else onResume();

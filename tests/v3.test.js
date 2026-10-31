@@ -299,3 +299,32 @@ test('real ZEC long: TP/SL (OCO) uses the exact liability 0.001995 ZEC', async (
   assert.equal(state.closes[0].mode, 'oco');
   assert.ok(Number(state.closes[0].stopPrice) < 3_474_234_550 && Number(state.closes[0].price) > 3_474_234_550);
 });
+
+test('sizing from total equity: later trades are not smaller just because collateral is locked', () => {
+  const s = { riskPct: 2, leverage: 2 };
+  const first = buildPlan(idea(), ctx({ balanceRials: 20_000_000, equityRials: 20_000_000, settings: s })).plan;
+  const later = buildPlan(idea(), ctx({ balanceRials: 12_000_000, equityRials: 20_000_000, openPositions: 2, openSymbols: ['ETHIRT', 'SOLIRT'], settings: s })).plan;
+  assert.ok(Math.abs(first.lossAtStop - 400_000) < 5_000, `first ${first.lossAtStop}`);
+  assert.ok(Math.abs(later.lossAtStop - first.lossAtStop) < 5_000, `later ${later.lossAtStop} vs ${first.lossAtStop}`);
+  assert.ok(Math.abs(later.riskPct - 2) < 0.05);
+  // free balance still caps the collateral that can be locked
+  const tight = buildPlan(idea(), ctx({ balanceRials: 3_000_000, equityRials: 20_000_000, settings: s })).plan;
+  assert.ok(tight.collateral <= 3_000_000 * 0.95 + 1);
+  assert.equal(tight.cappedByBalance, true);
+});
+
+test('equal split: 2M toman, 5 positions → ~400k toman collateral each; 5M → ~1M', () => {
+  const s = { sizing: 'equal', maxOpenPositions: 5, leverage: 2 };
+  const twoM = buildPlan(idea(), ctx({ balanceRials: 20_000_000, equityRials: 20_000_000, settings: s })).plan;
+  assert.ok(Math.abs(twoM.collateral - 4_000_000) < 20_000, `collateral ${twoM.collateral}`);
+  assert.ok(Math.abs(twoM.notional - 8_000_000) < 40_000);
+  assert.equal(twoM.sizing, 'equal');
+  // the 4th trade, with 3 open, is the same size
+  const fourth = buildPlan(idea(), ctx({ balanceRials: 8_000_000, equityRials: 20_000_000, openPositions: 3, openSymbols: ['A', 'B', 'C'], settings: s })).plan;
+  assert.ok(Math.abs(fourth.collateral - twoM.collateral) < 20_000);
+  const fiveM = buildPlan(idea(), ctx({ balanceRials: 50_000_000, equityRials: 50_000_000, settings: s })).plan;
+  assert.ok(Math.abs(fiveM.collateral - 10_000_000) < 50_000, `collateral ${fiveM.collateral}`);
+  // loss depends on the stop distance in this mode
+  const wide = buildPlan(idea({ stop_loss_pct: 4, take_profit_pct: 8 }), ctx({ balanceRials: 20_000_000, equityRials: 20_000_000, settings: s })).plan;
+  assert.ok(wide.lossAtStop > twoM.lossAtStop * 2);
+});

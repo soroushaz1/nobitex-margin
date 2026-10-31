@@ -75,6 +75,7 @@ export const DEFAULT_SETTINGS = {
   maxSpreadPct: 0.6,
   minVolumeBillionToman: 0.5,
   lockMinutes: 30,
+  sizing: 'risk',
   paperBalanceToman: 996000,
   aiBaseUrl: '',
   aiModel: '',

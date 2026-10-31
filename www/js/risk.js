@@ -48,6 +48,7 @@ export function effectiveSettings(s = {}) {
     minRewardRisk: clamp(s.minRewardRisk, RULES.minRewardRisk, { step: 0.1 }),
     maxSpreadPct: clamp(s.maxSpreadPct, RULES.maxSpreadPct, { step: 0.05 }),
     minVolumeBillionToman: clamp(s.minVolumeBillionToman, RULES.minVolumeBillionToman, { step: 0.1 }),
+    sizing: s.sizing === 'equal' ? 'equal' : 'risk',
   };
 }
 
@@ -66,7 +67,8 @@ export function scanRules(s = {}, exclude = []) {
 /**
  * Build an executable plan from an AI idea.
  * idea: { symbol, side: 'long'|'short', stop_loss_pct, take_profit_pct, confidence }
- * ctx:  { price, balanceRials, market: {maxLeverage, buyEnabled, sellEnabled, src, dst},
+ * ctx:  { price, balanceRials (free), equityRials (free + locked in positions),
+ *         market: {maxLeverage, buyEnabled, sellEnabled, src, dst},
  *         amountStep, priceStep, minOrderRials, settings, tradesToday, openPositions,
  *         openSymbols: [...], spreadPct }
  * Returns { ok: true, plan } or { ok: false, reasons: [...] }.
@@ -80,6 +82,9 @@ export function buildPlan(idea, ctx) {
   const tpPct = Number(idea.take_profit_pct);
   const conf = Number(idea.confidence);
   const balance = Number(ctx.balanceRials);
+  // Size from the whole margin account, not just what is still free, so the 5th trade
+  // is as big as the 1st. Free balance only caps the collateral that can be locked.
+  const equity = Math.max(Number(ctx.equityRials) || 0, balance);
   const market = ctx.market || {};
   const symbol = String(ctx.symbol || idea.symbol || '').toUpperCase();
 
@@ -117,8 +122,15 @@ export function buildPlan(idea, ctx) {
   const priceStep = Number(ctx.priceStep) || 10;
   const minOrder = Number(ctx.minOrderRials) || DEFAULT_MIN_ORDER_RIALS;
 
-  const riskRials = (balance * s.riskPct) / 100;
-  let notional = riskRials / ((stopPct + FIXED.FEE_BUFFER_PCT) / 100);
+  let notional;
+  if (s.sizing === 'equal') {
+    // equal split: each position gets equity / (max open positions) as collateral
+    notional = (equity / s.maxOpenPositions) * leverage;
+  } else {
+    // fixed risk: loss at the stop = riskPct of equity
+    const riskRials = (equity * s.riskPct) / 100;
+    notional = riskRials / ((stopPct + FIXED.FEE_BUFFER_PCT) / 100);
+  }
   const maxNotional = balance * FIXED.MAX_COLLATERAL_SHARE * leverage;
   const cappedByBalance = notional > maxNotional;
   notional = Math.min(notional, maxNotional);
@@ -165,7 +177,8 @@ export function buildPlan(idea, ctx) {
       tpPrice,
       lossAtStop,
       gainAtTp,
-      riskPct: s.riskPct,
+      riskPct: (lossAtStop / equity) * 100,
+      sizing: s.sizing,
       rewardRisk: tpPct / stopPct,
       cappedByBalance,
     },
