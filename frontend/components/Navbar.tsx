@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { QuoteCurrency, WalletBalances, LiveSyncStatus } from '../types';
-import { formatCurrency } from '../constants';
+import { QuoteCurrency, WalletBalances } from '../types';
+import { USDT_TO_IRT_RATE, formatCurrency } from '../constants';
 import { 
+  ArrowLeftRight, 
   Wallet, 
   RotateCcw, 
+  ShieldAlert, 
   Sparkles, 
+  TrendingUp, 
+  Zap, 
   Coins,
-  ChevronDown,
-  GitBranch,
-  Radio
+  ChevronDown
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -17,9 +19,7 @@ interface NavbarProps {
   balances: WalletBalances;
   onResetBalances: () => void;
   onOpenAiRisk: () => void;
-  onOpenRepoInspector: () => void;
   onQuickDeposit: (currency: QuoteCurrency, amount: number) => void;
-  syncStatus: LiveSyncStatus;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -28,22 +28,20 @@ export const Navbar: React.FC<NavbarProps> = ({
   balances,
   onResetBalances,
   onOpenAiRisk,
-  onOpenRepoInspector,
   onQuickDeposit,
-  syncStatus,
 }) => {
   const [showWalletMenu, setShowWalletMenu] = useState(false);
 
   const totalEquityInActiveCurrency =
     quoteCurrency === 'IRT'
-      ? balances.IRT.free + balances.IRT.locked + (balances.USDT.free + balances.USDT.locked) * syncStatus.usdtIrtRate
-      : balances.USDT.free + balances.USDT.locked + (balances.IRT.free + balances.IRT.locked) / syncStatus.usdtIrtRate;
+      ? balances.IRT.free + balances.IRT.locked + (balances.USDT.free + balances.USDT.locked) * USDT_TO_IRT_RATE
+      : balances.USDT.free + balances.USDT.locked + (balances.IRT.free + balances.IRT.locked) / USDT_TO_IRT_RATE;
 
   return (
     <header className="bg-nobi-dark border-b border-nobi-border sticky top-0 z-40 select-none">
-      <div className="max-w-[1920px] mx-auto px-4 h-16 flex items-center justify-between gap-3 sm:gap-4">
+      <div className="max-w-[1920px] mx-auto px-4 h-16 flex items-center justify-between gap-4">
         {/* Brand & Market Switcher */}
-        <div className="flex items-center gap-4 lg:gap-6">
+        <div className="flex items-center gap-6">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-400 flex items-center justify-center font-bold text-white shadow-lg shadow-emerald-500/20 text-lg tracking-wider">
               N
@@ -87,35 +85,21 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Quick Rate Indicator */}
-          <div className="hidden xl:flex items-center gap-2 text-xs px-3 py-1 rounded-lg bg-slate-900/60 border border-slate-800 text-slate-300">
+          <div className="hidden lg:flex items-center gap-2 text-xs px-3 py-1 rounded-lg bg-slate-900/60 border border-slate-800 text-slate-300">
             <span className="text-slate-400">1 USDT =</span>
             <span className="font-mono font-semibold text-emerald-400">
-              {syncStatus.usdtIrtRate.toLocaleString()} IRT
+              {USDT_TO_IRT_RATE.toLocaleString()} IRT
             </span>
             <span className="text-[10px] text-slate-400">تومان</span>
           </div>
         </div>
 
-        {/* Right actions: Repo Info, AI Advisor, Wallet, Reset */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          {/* Repository Explorer Button */}
-          <button
-            onClick={onOpenRepoInspector}
-            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 text-slate-200 text-xs font-semibold shadow-sm transition-all"
-            title="Inspect soroushaz1/nobitex-margin repository architecture & live Nobitex feed"
-          >
-            <GitBranch className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden md:inline">ریپازیتوری</span>
-            <span className="flex items-center gap-1 px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 rounded text-[10px] border border-emerald-500/20">
-              <Radio className="w-2.5 h-2.5 animate-pulse" />
-              <span>Nobitex API</span>
-            </span>
-          </button>
-
+        {/* Right actions: AI Advisor, Wallet, Reset */}
+        <div className="flex items-center gap-3">
           {/* Gemini AI Risk Auditor Button */}
           <button
             onClick={onOpenAiRisk}
-            className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-purple-500/10 to-blue-500/10 hover:from-amber-500/20 hover:to-blue-500/20 border border-amber-500/30 text-amber-300 text-xs font-semibold shadow-sm transition-all group"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-purple-500/10 to-blue-500/10 hover:from-amber-500/20 hover:to-blue-500/20 border border-amber-500/30 text-amber-300 text-xs font-semibold shadow-sm transition-all group"
           >
             <Sparkles className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
             <span className="hidden sm:inline">AI Margin Guardian</span>
