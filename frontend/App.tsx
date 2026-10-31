@@ -26,6 +26,7 @@ import { PositionsTable } from './components/PositionsTable';
 import { AiRiskModal } from './components/AiRiskModal';
 import { RepoInspectorModal } from './components/RepoInspectorModal';
 import { AiSignalsPanel } from './components/AiSignalsPanel';
+import { GitHubCiFixNotice } from './components/GitHubCiFixNotice';
 import { fetchNobitexMarketStats } from './services/nobitexService';
 import { generateAITradeSignals } from './services/geminiService';
 
@@ -487,6 +488,9 @@ export const App: React.FC = () => {
 
       {/* 3. Main Trading Layout */}
       <main className="flex-1 max-w-[1920px] w-full mx-auto p-2 sm:p-3 flex flex-col gap-3">
+        {/* GitHub Actions CI Notice */}
+        <GitHubCiFixNotice />
+
         {/* HERO AI SIGNALS PANEL: Instant 1-Click Margin Setups */}
         <AiSignalsPanel
           signals={aiSignals}
