@@ -44,20 +44,24 @@ export function exactAmount(v) {
 
 /**
  * Close amounts (in the coin) for a position, most likely first.
- * Verified against real Nobitex data: a short's size is `liability` (coin owed, which
- * grows with interest, e.g. 0.0021954888) and its `totalAsset` is in rials; for a long
- * it is the other way round (`totalAsset` = coin held). The exact value comes first —
- * rounding it down to the market step leaves an unclosable remainder. The planned
- * amount is used only when the exchange field is missing.
+ * Verified against real Nobitex positions (one long, one short): for BOTH sides the
+ * position size in the coin is `liability` (equal to `delegatedAmount` plus interest,
+ * e.g. 0.001995 ZEC, 0.0021954888 ETH), and `totalAsset` is a rial value. The exact
+ * value comes first — rounding it down leaves an unclosable remainder. A value worth
+ * far more than the whole position (i.e. a rial number) is never used as a coin amount.
+ * The planned amount is used only when the exchange gives no usable size.
  */
-export function positionAmounts(p, fallbackAmount, step) {
+export function positionAmounts(p, fallbackAmount, step, refPrice) {
   const side = positionSide(p);
-  const field = side === 'long' ? p.totalAsset : p.liability ?? p.delegatedAmount;
+  const price = Number(refPrice) || Number(p.markPrice) || Number(p.entryPrice);
+  const size = Number(p.collateral) * Number(p.leverage);
+  const plausible = (n) => !(price > 0 && size > 0 && n * price > size * 50);
   const out = [];
   const add = (v) => {
     if (v && Number(v) > 0 && !out.some((x) => Number(x) === Number(v))) out.push(v);
   };
-  if (Number(field) > 0) {
+  const field = [p.liability, p.delegatedAmount].find((v) => Number(v) > 0 && plausible(Number(v)));
+  if (field !== undefined) {
     add(exactAmount(field));
     add(floorToStep(Number(field), step));
   } else if (Number(fallbackAmount) > 0) {

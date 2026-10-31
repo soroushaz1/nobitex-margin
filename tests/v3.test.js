@@ -79,10 +79,21 @@ const REAL_SHORT = {
   totalAsset: '6585259.5943500834', liabilityInOrder: '0', assetInOrder: '0', unrealizedPNL: '-130256.10599697',
 };
 
-test('position amounts: exact exchange value first (short=liability, long=totalAsset); planned amount only as fallback', () => {
+// Real long returned by Nobitex: size is `liability` in ZEC; totalAsset is rials
+const REAL_LONG = {
+  id: 121751470, side: 'buy', srcCurrency: 'zec', dstCurrency: 'rls', status: 'Open', collateral: '3480757.3333333333',
+  leverage: '2', liquidationPrice: '2087338580', entryPrice: '3474999000', exitPrice: null, delegatedAmount: '0.001995',
+  liability: '0.001995', totalAsset: '10413362.3633833333', liabilityInOrder: '0', assetInOrder: '0',
+  unrealizedPNL: '-34724.482525125', markPrice: '3474234550',
+};
+
+test('position amounts: exact liability first for both sides; rial values never used as coin; planned amount only as fallback', () => {
+  assert.deepEqual(positionAmounts(REAL_LONG, '0.002', 0.00001), ['0.001995', '0.00199'], 'long: liability, never the rial totalAsset');
   assert.deepEqual(positionAmounts(REAL_SHORT, '0.00219', 0.00001), ['0.0000054888'], 'never the planned 0.00219');
   assert.deepEqual(positionAmounts({ side: 'sell', liability: '0.0021954888' }, '0.00219', 0.00001), ['0.0021954888', '0.00219']);
-  assert.deepEqual(positionAmounts({ side: 'buy', totalAsset: '0.000950', liability: '5400000' }, '0.000956', 0.000001), ['0.00095']);
+  assert.deepEqual(positionAmounts({ side: 'buy', liability: '0.000950', totalAsset: '10500000', collateral: '5300000', leverage: '2', markPrice: '11000000000' }, '0.000956', 0.000001), ['0.00095']);
+  // a rial-sized value in liability (not seen in practice) is rejected → planned amount
+  assert.deepEqual(positionAmounts({ side: 'buy', liability: '10413362', collateral: '3480757', leverage: '2', markPrice: '3474234550' }, '0.002', 0.00001), ['0.00200', '0.00199']);
   assert.deepEqual(positionAmounts({ side: 'buy' }, '0.000956', 0.000001), ['0.000956', '0.000951']);
   assert.equal(exactAmount('1e-7'), '0.0000001');
   assert.equal(exactAmount('0'), null);
@@ -133,7 +144,7 @@ function exchange(state) {
     }],
     [(u) => u.includes('/margin/orders/add'), (u, i) => {
       state.added = JSON.parse(i.body);
-      state.positions.push({ id: 200, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', totalAsset: '0.000955', collateral: '5300000', leverage: '2' });
+      state.positions.push({ id: 200, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', liability: '0.000955', delegatedAmount: '0.000955', totalAsset: '15800000', collateral: '5300000', leverage: '2' });
       return { body: { status: 'ok', order: { id: 1 } } };
     }],
   ]);
@@ -153,7 +164,7 @@ test('close now on a LONG: cancels TP/SL first (incl. untriggered stop leg), the
   const state = {
     order: [],
     closes: [],
-    positions: [{ id: 77, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', totalAsset: '0.000950', liability: '5400000', collateral: '5400000', leverage: '2' }],
+    positions: [{ id: 77, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', liability: '0.000950', totalAsset: '15800000', collateral: '5400000', leverage: '2' }],
     openOrders: [
       { id: 501, status: 'Active', execution: 'Limit', type: 'sell', tradeType: 'Margin', srcCurrency: 'btc', dstCurrency: 'rls' },
       { id: 502, status: 'Inactive', execution: 'StopLimit', type: 'sell', tradeType: 'Margin', srcCurrency: 'btc', dstCurrency: 'rls' },
@@ -185,7 +196,7 @@ test('close now: market rejected → aggressive limit fallback; unfilled close i
 test('close now: every attempt rejected → error carries the step log', async () => {
   const state = {
     order: [], closes: [],
-    positions: [{ id: 9, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', totalAsset: '0.001', collateral: '5500000', leverage: '2' }],
+    positions: [{ id: 9, srcCurrency: 'btc', dstCurrency: 'rls', side: 'buy', liability: '0.001', collateral: '5500000', leverage: '2' }],
     openOrders: [{ id: 7, status: 'Inactive', tradeType: 'Margin', srcCurrency: 'btc', dstCurrency: 'rls' }],
   };
   // cancel by id fails on this exchange, so the stop leg keeps locking the amount
@@ -216,7 +227,7 @@ test('changing TP/SL: cancels old orders, retries with the next amount if reject
 });
 
 test('opening a trade while another market has a position works; same market refused', async () => {
-  const state = { order: [], closes: [], positions: [{ id: 3, srcCurrency: 'hype', dstCurrency: 'rls', side: 'buy', totalAsset: '1', collateral: '1', leverage: '1' }] };
+  const state = { order: [], closes: [], positions: [{ id: 3, srcCurrency: 'hype', dstCurrency: 'rls', side: 'buy', liability: '1', collateral: '16000000', leverage: '1' }] };
   const api = new Nobitex({ apiKey: 'K', privateKey: pem, nacl, fetchFn: exchange(state) });
   const plan = buildPlan(idea(), ctx({ openPositions: 1, openSymbols: ['HYPEIRT'] })).plan;
   await fastTimers(async () => {
@@ -275,4 +286,16 @@ test('dust rejected by the exchange → clear Persian explanation', async () => 
   const err = await fastTimers(() => closeNow(api, state.positions[0], { amountStep: 0.00001, priceStep: 10, minOrderRials: 3_000_000 }, null).then(() => null, (e) => e));
   assert.match(err.message, /خیلی کمی/);
   assert.match(err.message, /بستن کامل/);
+});
+
+test('real ZEC long: TP/SL (OCO) uses the exact liability 0.001995 ZEC', async () => {
+  const state = { order: [], closes: [], positions: [{ ...REAL_LONG }] };
+  const api = new Nobitex({ apiKey: 'K', privateKey: pem, nacl, fetchFn: exchange(state) });
+  const prices = protectionPrices('long', 3_474_234_550, 2.2, 4.5, 10);
+  const warnings = [];
+  const ok = await fastTimers(() => protectPosition(api, state.positions[0], prices, '0.002', { amountStep: 0.00001, priceStep: 10 }, () => {}, warnings, true));
+  assert.equal(ok, true, warnings.join());
+  assert.equal(state.closes[0].amount, '0.001995');
+  assert.equal(state.closes[0].mode, 'oco');
+  assert.ok(Number(state.closes[0].stopPrice) < 3_474_234_550 && Number(state.closes[0].price) > 3_474_234_550);
 });
