@@ -1,20 +1,12 @@
 {
-  "name": "nobitex-margin",
-  "version": "1.0.0",
-  "private": true,
-  "description": "دستیار معاملات تعهدی نوبیتکس: پیشنهاد با هوش مصنوعی، ثبت فقط با تایید کاربر",
-  "type": "module",
+  "name": "nobitex-margin-trading-terminal",
+  "workspaces": ["frontend", "backend"], 
   "scripts": {
-    "test": "node --test tests/*.test.js",
-    "build:runner": "node scripts/build-runner.mjs",
-    "sync": "cap sync android"
-  },
-  "dependencies": {
-    "@capacitor/android": "^7.0.0",
-    "@capacitor/background-runner": "^2.3.0",
-    "@capacitor/core": "^7.0.0"
+    "dev-frontend": "npm run dev --prefix frontend",
+    "dev-backend": "npm run dev --prefix backend",
+    "dev": "concurrently \"npm run dev-frontend\" \"npm run dev-backend\""
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.0.0"
+    "concurrently": "latest"
   }
 }
