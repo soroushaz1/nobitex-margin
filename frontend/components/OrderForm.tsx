@@ -8,8 +8,7 @@ import {
   WalletBalances 
 } from '../types';
 import { LEVERAGE_OPTIONS, formatCurrency, formatPrice } from '../constants';
-import { getInstantCopilotSetup } from '../services/geminiService';
-import { Calculator, Shield, AlertTriangle, Info, Zap, Sparkles, Wand2 } from 'lucide-react';
+import { Calculator, Shield, AlertTriangle, Info, Zap } from 'lucide-react';
 
 interface OrderFormProps {
   quoteCurrency: QuoteCurrency;
@@ -25,7 +24,6 @@ interface OrderFormProps {
     amount: number; // in base crypto (e.g. BTC)
     takeProfit?: number;
     stopLoss?: number;
-    aiSuggested?: boolean;
   }) => void;
   presetPrice?: number;
 }
@@ -49,8 +47,6 @@ export const OrderForm: React.FC<OrderFormProps> = ({
   const [enableTpSl, setEnableTpSl] = useState(false);
   const [tpInput, setTpInput] = useState<string>('');
   const [slInput, setSlInput] = useState<string>('');
-  const [copilotLoading, setCopilotLoading] = useState(false);
-  const [copilotReason, setCopilotReason] = useState<string | null>(null);
 
   // Update price when preset clicked from order book
   useEffect(() => {
@@ -77,6 +73,8 @@ export const OrderForm: React.FC<OrderFormProps> = ({
   const maxBuyableBase = priceNum > 0 ? (availableQuoteCollateral * leverage) / priceNum : 0;
 
   // Approximate liquidation price calculation
+  // For Long: LiqPrice = EntryPrice * (1 - (1/Leverage) + MaintenanceMargin)
+  // For Short: LiqPrice = EntryPrice * (1 + (1/Leverage) - MaintenanceMargin)
   const maintenanceRate = 0.05; // 5% maintenance margin
   const liquidationPrice =
     leverage > 1 && priceNum > 0
@@ -90,35 +88,6 @@ export const OrderForm: React.FC<OrderFormProps> = ({
     setPercentSlider(pct);
     const targetAmount = (maxBuyableBase * (pct / 100));
     setAmountInput(targetAmount > 0 ? targetAmount.toFixed(baseAsset.decimals) : '');
-  };
-
-  // 1-Click AI Copilot Auto-Fill
-  const handleAutoCopilot = async () => {
-    setCopilotLoading(true);
-    try {
-      const res = await getInstantCopilotSetup(
-        baseAsset.symbol,
-        currentPrice,
-        quoteCurrency,
-        baseAsset.maxLeverage
-      );
-
-      setSide(res.side);
-      setLeverage(res.leverage);
-      setPriceInput(res.entryPrice.toString());
-      setEnableTpSl(true);
-      setTpInput(res.takeProfit.toString());
-      setSlInput(res.stopLoss.toString());
-      setCopilotReason(res.reason);
-
-      // Default to 25% of user's free balance for safe execution
-      const suggestedSize = ((availableQuoteCollateral * 0.25 * res.leverage) / res.entryPrice);
-      if (suggestedSize > 0) {
-        setAmountInput(suggestedSize.toFixed(baseAsset.decimals));
-      }
-    } finally {
-      setCopilotLoading(false);
-    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -139,42 +108,13 @@ export const OrderForm: React.FC<OrderFormProps> = ({
       amount: amountNum,
       takeProfit: enableTpSl && tpInput ? parseFloat(tpInput) : undefined,
       stopLoss: enableTpSl && slInput ? parseFloat(slInput) : undefined,
-      aiSuggested: Boolean(copilotReason),
     });
 
     setAmountInput('');
-    setCopilotReason(null);
   };
 
   return (
     <div className="bg-nobi-card border border-nobi-border rounded-xl p-4 flex flex-col h-full text-xs">
-      {/* AI Copilot Quick Assistant Banner */}
-      <div className="mb-3 p-2.5 rounded-xl bg-gradient-to-r from-amber-500/15 via-purple-500/10 to-emerald-500/15 border border-amber-500/30 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Wand2 className="w-4 h-4 text-amber-400 shrink-0" />
-          <div>
-            <span className="font-bold text-white text-[11px] block">دستیار هوشمند معامله (AI Copilot)</span>
-            <span className="text-[10px] text-slate-400">تکمیل خودکار جهت، اهرم، حد سود و ضرر</span>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={handleAutoCopilot}
-          disabled={copilotLoading}
-          className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] flex items-center gap-1 transition-colors shadow-sm disabled:opacity-50"
-        >
-          {copilotLoading ? <Sparkles className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-          <span>تنظیم هوشمند</span>
-        </button>
-      </div>
-
-      {copilotReason && (
-        <div className="mb-3 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-300">
-          <strong className="block text-[10px] text-emerald-400 mb-0.5">تحلیل هوش مصنوعی:</strong>
-          {copilotReason}
-        </div>
-      )}
-
       {/* Long / Short Selector */}
       <div className="grid grid-cols-2 gap-2 p-1 bg-slate-900/80 rounded-xl border border-nobi-border mb-3">
         <button
@@ -427,7 +367,7 @@ export const OrderForm: React.FC<OrderFormProps> = ({
         <button
           type="submit"
           disabled={amountNum <= 0}
-          className={`w-full py-3 rounded-xl font-bold text-xs transition-all shadow-lg mt-3 flex items-center justify-center gap-2 ${
+          className={`w-full py-3 rounded-xl font-bold text-xs transition-all shadow-lg mt-3 ${
             amountNum <= 0
               ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
               : side === 'BUY'
@@ -435,12 +375,7 @@ export const OrderForm: React.FC<OrderFormProps> = ({
               : 'bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 text-white shadow-rose-500/20 active:scale-[0.99]'
           }`}
         >
-          <Zap className="w-3.5 h-3.5" />
-          <span>
-            {side === 'BUY'
-              ? `ثبت موقعیت خرید تعهدی (Long ${leverage}x)`
-              : `ثبت موقعیت فروش تعهدی (Short ${leverage}x)`}
-          </span>
+          {side === 'BUY' ? `ثبت موقعیت خرید تعهدی (Long ${leverage}x)` : `ثبت موقعیت فروش تعهدی (Short ${leverage}x)`}
         </button>
       </form>
     </div>
