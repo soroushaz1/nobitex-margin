@@ -1,60 +1,53 @@
-# دستیار تعهدی نوبیتکس
+# Vertex AI Studio Frontend App with Node.js Backend
 
-اپ اندروید شخصی برای معاملات تعهدی (مارجین) در نوبیتکس:
-هوش مصنوعی بازار را تحلیل می‌کند و پیشنهاد می‌دهد، و **هیچ سفارشی بدون تایید شما ثبت نمی‌شود**.
+This repository contains a frontend and a Node.js backend, designed to run together.
+The backend acts as a proxy, handling Google Cloud API calls.
 
-## نصب
+This project is intended for demonstration and prototyping purposes only.
+It is not intended for use in a production environment.
 
-1. در همین مخزن به بخش **Releases** بروید و آخرین `nobitex-margin.apk` را دانلود کنید.
-   (اگر Release نبود، تب **Actions** را ببینید؛ ساخت حدود ۵ دقیقه طول می‌کشد.)
-2. فایل را باز کنید و اجازه «نصب از منابع ناشناس» را بدهید.
-3. نسخه‌های بعدی روی همین نسخه نصب می‌شوند و اطلاعاتتان پاک نمی‌شود.
+## Prerequisites
 
-## راه‌اندازی
+To run this application locally, you need:
 
-1. **رمز ورود:** بار اول یک رمز ۴ تا ۸ رقمی می‌سازید. کلیدها با همین رمز رمزنگاری می‌شوند؛ اگر فراموشش کنید باید اطلاعات را پاک کنید و دوباره وارد کنید.
-2. **هوش مصنوعی** (تنظیمات): آدرس سرویس، نام مدل و کلید. هر سرویس سازگار با OpenAI (`/chat/completions`) کار می‌کند. دکمه «آزمایش اتصال» را بزنید.
-3. **حالت آزمایشی:** برنامه با معاملات کاغذی شروع می‌شود. پیشنهادها با قیمت‌های واقعی نوبیتکس سنجیده می‌شوند و نتیجه در «کارنامه» ثبت می‌شود. برای این حالت کلید نوبیتکس لازم نیست.
-4. **کلید API نوبیتکس** (فقط برای پول واقعی): در پنل نوبیتکس کلید API بسازید.
-   - فقط دسترسی **خواندن و معامله** بدهید؛ **دسترسی برداشت ندهید**.
-   - لیست IP مجاز را خالی بگذارید، چون IP گوشی مرتب عوض می‌شود.
-   - کلید و کلید خصوصی را در تنظیمات وارد کنید و «آزمایش اتصال» بزنید. باید موجودی تعهدی‌تان را نشان دهد.
-   - اگر نوبیتکس از شما کلید عمومی خواست، از «ساخت جفت کلید» در تنظیمات استفاده کنید.
-5. وقتی کارنامه آزمایشی قانع‌تان کرد، در تنظیمات حالت را روی **پول واقعی** بگذارید.
+*   **[Google Cloud SDK / gcloud CLI](https://cloud.google.com/sdk/docs/install)**: Follow the instructions to install the SDK.
 
-## چطور کار می‌کند
+*   **gcloud Initialization**:
+    *   Initialize the gcloud CLI:
+        ```bash
+        gcloud init
+        ```
+    *   Authenticate for Application Default Credentials (needed to call Google Cloud APIs):
+        ```bash
+        gcloud auth application-default login
+        ```
 
-- **تحلیل:** پرحجم‌ترین بازارهای تعهدی ریالی انتخاب می‌شوند. برای هر کدام روی کندل‌های ۱۵ دقیقه، ۱ ساعت و ۴ ساعت اندیکاتورها (EMA، RSI، ATR، MACD، سقف و کف اخیر، حجم) روی گوشی محاسبه و به هوش مصنوعی داده می‌شوند. جواب یا یک معامله با حد ضرر و حد سود است، یا «فعلاً معامله نکن».
-- **قوانین ریسک** (همه در تنظیمات قابل تغییر):
-  - اهرم ۱ تا ۱۰ (و هرگز بیشتر از سقف نوبیتکس برای آن بازار)
-  - ریسک هر معامله ۰٫۵ تا ۲۰٪ موجودی
-  - تا ۱۰ پوزیشن هم‌زمان (در هر بازار فقط یکی)
-  - سقف معامله روزانه (۰ = نامحدود، پیش‌فرض)
-  - حداقل اطمینان تحلیل، حداقل نسبت سود به ضرر، حداکثر اختلاف خرید/فروش، حداقل حجم بازار
-  - ثابت: حد ضرر اجباری (۰٫۳ تا ۱۵٪) که باید قبل از قیمت لیکوئید فعال شود، و تایید شما برای هر سفارش
-  - اگر قیمت از زمان تحلیل تغییر کرده باشد، هنگام تایید همه‌چیز با قیمت لحظه‌ای دوباره محاسبه می‌شود
-- **ثبت سفارش واقعی:** بعد از تایید (با شمارش معکوس ۲ ثانیه‌ای)، سفارش ورود به‌صورت بازار با سقف لغزش ۰٫۳٪ ثبت می‌شود. بلافاصله یک سفارش OCO (حد سود + حد ضرر) روی پوزیشن گذاشته می‌شود. اگر این مرحله ناموفق باشد، اپ هشدار قرمز می‌دهد. در «پوزیشن‌ها» برای هر پوزیشن (حتی آن‌هایی که خارج از برنامه باز شده‌اند) می‌توانید حد سود/ضرر بگذارید یا تغییر دهید، یا پوزیشن را فوری ببندید؛ سفارش‌های قبلی آن بازار خودکار لغو می‌شوند.
+*   **Node.js and npm**: Ensure you have Node.js and its package manager, `npm`, installed on your machine.
 
-## بررسی خودکار (پس‌زمینه)
+## Project Structure
 
-- از تنظیمات ← «بررسی خودکار» روشن می‌شود. حدود هر ۱۵ دقیقه (زمان دقیق دست اندروید است) ۱۰ تا ۱۵ بازار پرحجم بررسی می‌شوند.
-- فقط وقتی فرصتی از قوانین ریسک رد شود اعلان می‌آید. همان فرصت تا ۲ ساعت دوباره اعلان نمی‌شود.
-- با باز کردن برنامه، فرصت پیدا شده (اگر کمتر از ۲۰ دقیقه از آن گذشته باشد) با برچسب «پیدا شده در بررسی خودکار» نمایش داده می‌شود و باز هم فقط با تایید شما ثبت می‌شود.
-- بررسی پس‌زمینه فقط داده عمومی بازار می‌خواند و به کلید نوبیتکس دسترسی ندارد. برای کار در پس‌زمینه، کلید هوش مصنوعی بدون رمز روی گوشی نگه داشته می‌شود و با خاموش کردن پاک می‌شود.
-- در سامسونگ: تنظیمات ← برنامه‌ها ← دستیار تعهدی ← باتری ← «بدون محدودیت».
-- بازارهای زیر حدود ۱ میلیارد تومان حجم روزانه و بازارهای با اختلاف قیمت خرید و فروش بیش از ۰٫۴٪ کنار گذاشته می‌شوند.
+The project is organized into two main directories:
 
-## هشدارهای مهم
+*   `frontend/`: Contains the Frontend application code.
+*   `backend/`: Contains the Node.js/Express server code to proxy Google Cloud API calls.
 
-- این برنامه ابزار کمکی است و **مشاوره مالی نیست**. هوش مصنوعی هیچ برتری اثبات‌شده‌ای در پیش‌بینی بازار ندارد. کارنامه آزمایشی را جدی بگیرید.
-- در حرکت‌های خیلی شدید، حد ضرر ممکن است با لغزش اجرا شود و ضرر از عدد پیش‌بینی‌شده بیشتر شود.
-- منطق برنامه با تست‌های خودکار و یک صرافی شبیه‌سازی‌شده بررسی شده است، اما **با API واقعی نوبیتکس آزمایش نشده**. اولین معامله واقعی را هم‌زمان در اپ نوبیتکس هم نگاه کنید و مطمئن شوید حد ضرر ثبت شده است.
-- حد سود و ضرر روی خود نوبیتکس ثبت می‌شوند، پس بسته بودن اپ برای پوزیشن باز مشکلی ایجاد نمی‌کند.
+## Backend Environment Variables
 
-## برای توسعه
+The `backend/.env.local` file is automatically generated when you download this application.
+It contains essential Google Cloud environment variables pre-configured based on your project settings at the time of download.
 
-- کد اپ در `www/` است (HTML/JS بدون فریم‌ورک) و با [Capacitor](https://capacitorjs.com) به اپ اندروید تبدیل می‌شود.
-- درخواست‌ها از طریق HTTP بومی اندروید (CapacitorHttp) ارسال می‌شوند. امضای Ed25519 با tweetnacl انجام می‌شود.
-- تست‌ها: `npm test`
-- با هر push به شاخه `main`، فایل `.github/workflows/build.yml` فایل APK را می‌سازد و به‌صورت Release منتشر می‌کند.
-- `keystore/debug.keystore` فقط برای امضای ثابت نسخه‌های شخصی است تا به‌روزرسانی‌ها روی هم نصب شوند. مخزن را **خصوصی** نگه دارید.
+The variables set in `backend/.env.local` are:
+*   `API_BACKEND_PORT`: The port the backend API server listens on (e.g., `5000`).
+*   `API_PAYLOAD_MAX_SIZE`: The maximum size of the request payload accepted by the backend server (e.g., `5mb`).
+*   `GOOGLE_CLOUD_LOCATION`: The Google Cloud region associated with your project.
+*   `GOOGLE_CLOUD_PROJECT`: Your Google Cloud Project ID.
+
+**Note:** These variables are automatically populated during the download process.
+You can modify the values in `backend/.env.local` if you need to change them.
+
+## Installation and Running the App
+
+To install dependencies and run your Google Cloud Vertex AI Studio App locally, execute the following command:
+
+```bash
+npm install && npm run dev
