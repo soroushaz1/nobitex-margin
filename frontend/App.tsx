@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   QuoteCurrency, 
   CryptoAsset, 
@@ -8,9 +8,7 @@ import {
   TradeEntry, 
   Position, 
   Order, 
-  WalletBalances,
-  LiveSyncStatus,
-  AITradeSignal
+  WalletBalances 
 } from './types';
 import { 
   SUPPORTED_ASSETS, 
@@ -24,35 +22,12 @@ import { OrderBook } from './components/OrderBook';
 import { OrderForm } from './components/OrderForm';
 import { PositionsTable } from './components/PositionsTable';
 import { AiRiskModal } from './components/AiRiskModal';
-import { RepoInspectorModal } from './components/RepoInspectorModal';
-import { AiSignalsPanel } from './components/AiSignalsPanel';
-import { GitHubCiFixNotice } from './components/GitHubCiFixNotice';
-import { fetchNobitexMarketStats } from './services/nobitexService';
-import { generateAITradeSignals } from './services/geminiService';
 
 export const App: React.FC = () => {
   // 1. Core State: Quote Currency (IRT vs USDT)
   const [quoteCurrency, setQuoteCurrency] = useState<QuoteCurrency>('IRT');
   const [selectedAsset, setSelectedAsset] = useState<CryptoAsset>(SUPPORTED_ASSETS[0]);
   const [balances, setBalances] = useState<WalletBalances>(INITIAL_BALANCES);
-
-  // Live Nobitex sync status
-  const [syncStatus, setSyncStatus] = useState<LiveSyncStatus>({
-    source: 'NOBITEX_PUBLIC_API',
-    lastUpdated: new Date().toLocaleTimeString(),
-    usdtIrtRate: USDT_TO_IRT_RATE,
-    latencyMs: 120,
-    isConnected: true,
-  });
-
-  // AI Signals
-  const [aiSignals, setAiSignals] = useState<AITradeSignal[]>([]);
-  const [signalsLoading, setSignalsLoading] = useState(false);
-
-  // Modal controls
-  const [isAiRiskOpen, setIsAiRiskOpen] = useState(false);
-  const [isRepoInspectorOpen, setIsRepoInspectorOpen] = useState(false);
-  const [presetOrderPrice, setPresetOrderPrice] = useState<number | undefined>();
 
   // 2. Positions & Orders
   const [positions, setPositions] = useState<Position[]>([
@@ -74,119 +49,42 @@ export const App: React.FC = () => {
       roePercentage: 13.37,
       maintenanceMarginRate: 0.05,
       openedAt: '14:20',
-      aiSuggested: true,
     },
   ]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [isAiRiskOpen, setIsAiRiskOpen] = useState(false);
+  const [presetOrderPrice, setPresetOrderPrice] = useState<number | undefined>();
 
-  // Compute baseline price based on active currency
+  // Helper to compute active market price based on quote currency
   const basePriceInCurrency = useMemo(() => {
     return quoteCurrency === 'IRT'
-      ? selectedAsset.basePriceUSDT * syncStatus.usdtIrtRate
+      ? selectedAsset.basePriceUSDT * USDT_TO_IRT_RATE
       : selectedAsset.basePriceUSDT;
-  }, [selectedAsset, quoteCurrency, syncStatus.usdtIrtRate]);
+  }, [selectedAsset, quoteCurrency]);
 
   const [currentMarketPrice, setCurrentMarketPrice] = useState<number>(basePriceInCurrency);
-  const [priceChange24h, setPriceChange24h] = useState<number>(2.45);
 
-  // Poll live Nobitex feed or update price accurately
-  const syncLivePrices = useCallback(async () => {
-    try {
-      const stats = await fetchNobitexMarketStats(
-        selectedAsset.symbol,
-        quoteCurrency,
-        selectedAsset.basePriceUSDT
-      );
-
-      setCurrentMarketPrice(stats.price);
-      setPriceChange24h(stats.change24h);
-      setSyncStatus((prev) => ({
-        ...prev,
-        source: stats.source,
-        lastUpdated: new Date().toLocaleTimeString(),
-        usdtIrtRate: stats.usdtRate || prev.usdtIrtRate,
-        latencyMs: stats.latencyMs,
-        isConnected: true,
-      }));
-    } catch {
-      setCurrentMarketPrice(basePriceInCurrency);
-    }
-  }, [selectedAsset.symbol, selectedAsset.basePriceUSDT, quoteCurrency, basePriceInCurrency]);
-
-  // Synchronize on pair or currency toggle
+  // Sync market price when currency or asset changes
   useEffect(() => {
-    syncLivePrices();
-  }, [syncLivePrices]);
-
-  // Fetch AI automated trade signals
-  const fetchSignals = useCallback(async () => {
-    setSignalsLoading(true);
-    try {
-      const results = await generateAITradeSignals(
-        SUPPORTED_ASSETS,
-        quoteCurrency,
-        syncStatus.usdtIrtRate
-      );
-      setAiSignals(results);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSignalsLoading(false);
-    }
-  }, [quoteCurrency, syncStatus.usdtIrtRate]);
-
-  useEffect(() => {
-    fetchSignals();
-  }, [fetchSignals]);
-
-  // Periodic heartbeat every 4 seconds to maintain active order book & mark price
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const jitter = (Math.random() - 0.49) * 0.0012;
-      setCurrentMarketPrice((prev) => {
-        const nextPrice = prev * (1 + jitter);
-        return quoteCurrency === 'IRT' ? Math.round(nextPrice) : Number(nextPrice.toFixed(2));
-      });
-
-      // Update positions mark price and unrealized PnL
-      setPositions((prev) =>
-        prev.map((pos) => {
-          if (pos.baseAsset !== selectedAsset.symbol || pos.quoteCurrency !== quoteCurrency) {
-            return pos;
-          }
-          const priceDiff = pos.side === 'BUY'
-            ? currentMarketPrice - pos.entryPrice
-            : pos.entryPrice - currentMarketPrice;
-          const pnl = priceDiff * pos.size;
-          const roe = pos.margin > 0 ? (pnl / pos.margin) * 100 : 0;
-          return {
-            ...pos,
-            markPrice: currentMarketPrice,
-            unrealizedPnl: Math.round(pnl),
-            roePercentage: roe,
-          };
-        })
-      );
-    }, 3800);
-
-    return () => clearInterval(interval);
-  }, [selectedAsset.symbol, quoteCurrency, currentMarketPrice]);
+    setCurrentMarketPrice(basePriceInCurrency);
+  }, [basePriceInCurrency]);
 
   // Construct active market pair metrics
   const activePair: MarketPair = useMemo(() => {
+    const change = 2.45;
     return {
       id: `${selectedAsset.symbol}-${quoteCurrency}`,
       baseAsset: selectedAsset.symbol,
       quoteCurrency,
       lastPrice: currentMarketPrice,
-      change24h: priceChange24h,
+      change24h: change,
       high24h: currentMarketPrice * 1.034,
       low24h: currentMarketPrice * 0.972,
       volume24h: 124.6,
       fundingRate: 0.0001,
       borrowRatePerHour: 0.000015,
     };
-  }, [selectedAsset, quoteCurrency, currentMarketPrice, priceChange24h]);
+  }, [selectedAsset, quoteCurrency, currentMarketPrice]);
 
   // Generate dynamic candles
   const candles: CandleData[] = useMemo(() => {
@@ -211,7 +109,7 @@ export const App: React.FC = () => {
         low,
         close,
         volume: Math.floor(10 + Math.random() * 45),
-        ma20: close * (1 + Math.sin(i) * 0.005),
+        ma20: close * (1 + (Math.sin(i) * 0.005)),
       });
     }
     return list;
@@ -255,6 +153,39 @@ export const App: React.FC = () => {
     { id: 't3', price: currentMarketPrice * 1.001, amount: 0.08, time: '14:31:40', side: 'BUY' },
   ]);
 
+  // Simulate tick updates to keep terminal feeling active
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const jitter = (Math.random() - 0.49) * 0.0015;
+      setCurrentMarketPrice((prev) => {
+        const nextPrice = prev * (1 + jitter);
+        return quoteCurrency === 'IRT' ? Math.round(nextPrice) : Number(nextPrice.toFixed(2));
+      });
+
+      // Update positions mark price and unrealized PnL
+      setPositions((prev) =>
+        prev.map((pos) => {
+          if (pos.baseAsset !== selectedAsset.symbol || pos.quoteCurrency !== quoteCurrency) {
+            return pos;
+          }
+          const priceDiff = pos.side === 'BUY'
+            ? currentMarketPrice - pos.entryPrice
+            : pos.entryPrice - currentMarketPrice;
+          const pnl = priceDiff * pos.size;
+          const roe = pos.margin > 0 ? (pnl / pos.margin) * 100 : 0;
+          return {
+            ...pos,
+            markPrice: currentMarketPrice,
+            unrealizedPnl: Math.round(pnl),
+            roePercentage: roe,
+          };
+        })
+      );
+    }, 3200);
+
+    return () => clearInterval(interval);
+  }, [selectedAsset, quoteCurrency, currentMarketPrice]);
+
   // Handlers for Trading
   const handlePlaceOrder = (newOrderData: {
     side: 'BUY' | 'SELL';
@@ -265,7 +196,6 @@ export const App: React.FC = () => {
     amount: number;
     takeProfit?: number;
     stopLoss?: number;
-    aiSuggested?: boolean;
   }) => {
     const notional = newOrderData.amount * newOrderData.price;
     const requiredMargin = notional / newOrderData.leverage;
@@ -281,6 +211,7 @@ export const App: React.FC = () => {
     }));
 
     if (newOrderData.type === 'MARKET') {
+      // Execute immediately as Position
       const maintenanceMarginRate = 0.05;
       const liqPrice =
         newOrderData.side === 'BUY'
@@ -307,7 +238,6 @@ export const App: React.FC = () => {
         takeProfit: newOrderData.takeProfit,
         stopLoss: newOrderData.stopLoss,
         openedAt: new Date().toLocaleTimeString(),
-        aiSuggested: newOrderData.aiSuggested,
       };
 
       setPositions((prev) => [newPosition, ...prev]);
@@ -341,32 +271,6 @@ export const App: React.FC = () => {
       };
       setOrders((prev) => [newOrder, ...prev]);
     }
-  };
-
-  // 1-Click execution from AI Signals Panel
-  const handleExecuteAiSignal = (signal: AITradeSignal) => {
-    const freeCollat = balances[signal.quoteCurrency].free;
-    if (freeCollat <= 0) {
-      alert(`موجودی آزاد ${signal.quoteCurrency} کافی نیست. از بخش شارژ دمو کیف‌پول را شارژ کنید.`);
-      return;
-    }
-
-    // Allocate 20% of free balance safely
-    const allocatedMargin = freeCollat * 0.2;
-    const notional = allocatedMargin * signal.recommendedLeverage;
-    const baseAmount = notional / signal.entryPrice;
-
-    handlePlaceOrder({
-      side: signal.side,
-      type: 'MARKET',
-      marginMode: 'ISOLATED',
-      leverage: signal.recommendedLeverage,
-      price: signal.entryPrice,
-      amount: Number(baseAmount.toFixed(4)),
-      takeProfit: signal.takeProfitPrice,
-      stopLoss: signal.stopLossPrice,
-      aiSuggested: true,
-    });
   };
 
   const handleClosePosition = (positionId: string) => {
@@ -423,6 +327,7 @@ export const App: React.FC = () => {
       },
     }));
 
+    // Recalculate safer liquidation price with extra collateral
     setPositions((prev) =>
       prev.map((p) => {
         if (p.id !== positionId) return p;
@@ -458,26 +363,19 @@ export const App: React.FC = () => {
     setOrders([]);
   };
 
-  const handleSelectAssetBySymbol = (symbol: string) => {
-    const asset = SUPPORTED_ASSETS.find((a) => a.symbol === symbol);
-    if (asset) setSelectedAsset(asset);
-  };
-
   return (
     <div className="min-h-screen bg-[#0b0f17] text-slate-100 flex flex-col font-sans">
-      {/* 1. Navbar with IRT / USDT toggle and Repo Inspector */}
+      {/* 1. Navbar with prominent IRT / USDT toggle */}
       <Navbar
         quoteCurrency={quoteCurrency}
         onSelectQuoteCurrency={(curr) => setQuoteCurrency(curr)}
         balances={balances}
         onResetBalances={handleResetBalances}
         onOpenAiRisk={() => setIsAiRiskOpen(true)}
-        onOpenRepoInspector={() => setIsRepoInspectorOpen(true)}
         onQuickDeposit={handleQuickDeposit}
-        syncStatus={syncStatus}
       />
 
-      {/* 2. Market Header with metrics and coin switcher */}
+      {/* 2. Market Header with stats & coin tabs */}
       <MarketHeader
         selectedAsset={selectedAsset}
         onSelectAsset={(asset) => setSelectedAsset(asset)}
@@ -486,63 +384,47 @@ export const App: React.FC = () => {
         onToggleCurrency={(curr) => setQuoteCurrency(curr)}
       />
 
-      {/* 3. Main Trading Layout */}
-      <main className="flex-1 max-w-[1920px] w-full mx-auto p-2 sm:p-3 flex flex-col gap-3">
-        {/* GitHub Actions CI Notice */}
-        <GitHubCiFixNotice />
+      {/* 3. Main Trading Layout Grid */}
+      <main className="flex-1 max-w-[1920px] w-full mx-auto p-2 sm:p-3 grid grid-cols-1 lg:grid-cols-12 gap-3">
+        {/* Left Column (Desktop 8 / 12): Chart + Positions */}
+        <div className="lg:col-span-6 xl:col-span-7 flex flex-col gap-3">
+          <TradingChart
+            candles={candles}
+            quoteCurrency={quoteCurrency}
+            pairSymbol={selectedAsset.symbol}
+          />
+          <PositionsTable
+            positions={positions}
+            orders={orders}
+            quoteCurrency={quoteCurrency}
+            onClosePosition={handleClosePosition}
+            onCancelOrder={handleCancelOrder}
+            onAddMargin={handleAddMargin}
+          />
+        </div>
 
-        {/* HERO AI SIGNALS PANEL: Instant 1-Click Margin Setups */}
-        <AiSignalsPanel
-          signals={aiSignals}
-          quoteCurrency={quoteCurrency}
-          isLoading={signalsLoading}
-          onRefreshSignals={fetchSignals}
-          onExecuteSignal={handleExecuteAiSignal}
-          onSelectAssetBySymbol={handleSelectAssetBySymbol}
-        />
+        {/* Middle Column (Order Book: 3 / 12) */}
+        <div className="lg:col-span-3 xl:col-span-2">
+          <OrderBook
+            bids={bids}
+            asks={asks}
+            recentTrades={recentTrades}
+            quoteCurrency={quoteCurrency}
+            baseAssetSymbol={selectedAsset.symbol}
+            onSelectPrice={(price) => setPresetOrderPrice(price)}
+          />
+        </div>
 
-        {/* Trading Terminal Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-          {/* Left Column: Chart + Positions */}
-          <div className="lg:col-span-6 xl:col-span-7 flex flex-col gap-3">
-            <TradingChart
-              candles={candles}
-              quoteCurrency={quoteCurrency}
-              pairSymbol={selectedAsset.symbol}
-            />
-            <PositionsTable
-              positions={positions}
-              orders={orders}
-              quoteCurrency={quoteCurrency}
-              onClosePosition={handleClosePosition}
-              onCancelOrder={handleCancelOrder}
-              onAddMargin={handleAddMargin}
-            />
-          </div>
-
-          {/* Middle Column: Order Book & Recent Trades */}
-          <div className="lg:col-span-3 xl:col-span-2">
-            <OrderBook
-              bids={bids}
-              asks={asks}
-              recentTrades={recentTrades}
-              quoteCurrency={quoteCurrency}
-              baseAssetSymbol={selectedAsset.symbol}
-              onSelectPrice={(price) => setPresetOrderPrice(price)}
-            />
-          </div>
-
-          {/* Right Column: Margin Order Form with AI Copilot */}
-          <div className="lg:col-span-3 xl:col-span-3">
-            <OrderForm
-              quoteCurrency={quoteCurrency}
-              baseAsset={selectedAsset}
-              currentPrice={currentMarketPrice}
-              balances={balances}
-              onPlaceOrder={handlePlaceOrder}
-              presetPrice={presetOrderPrice}
-            />
-          </div>
+        {/* Right Column (Order Form: 3 / 12) */}
+        <div className="lg:col-span-3 xl:col-span-3">
+          <OrderForm
+            quoteCurrency={quoteCurrency}
+            baseAsset={selectedAsset}
+            currentPrice={currentMarketPrice}
+            balances={balances}
+            onPlaceOrder={handlePlaceOrder}
+            presetPrice={presetOrderPrice}
+          />
         </div>
       </main>
 
@@ -554,13 +436,6 @@ export const App: React.FC = () => {
         activeQuote={quoteCurrency}
         currentAsset={selectedAsset}
         currentPrice={currentMarketPrice}
-      />
-
-      {/* 5. Repository Inspector Modal */}
-      <RepoInspectorModal
-        isOpen={isRepoInspectorOpen}
-        onClose={() => setIsRepoInspectorOpen(false)}
-        syncStatus={syncStatus}
       />
     </div>
   );
