@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nobitex Margin - IRT & USDT Trading</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            nobi: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              500: '#10b981',
+              600: '#059669',
+              dark: '#0e131d',
+              card: '#161d2a',
+              cardHover: '#1c2536',
+              border: '#232e42',
+              accent: '#3b82f6',
+              gold: '#f59e0b',
+              buy: '#00c087',
+              sell: '#f6465d'
+            }
+          }
+        }
+      }
+    };
+  </script>
+  </head>
+<body class="bg-[#0b0f17] text-slate-100 font-sans antialiased min-h-screen selection:bg-emerald-500/30 selection:text-emerald-300">
+  <div id="root"></div>
+  <script type="module" src="index.tsx"></script>
+</body>
+</html>
