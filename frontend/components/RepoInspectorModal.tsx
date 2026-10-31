@@ -13,7 +13,10 @@ import {
   Database,
   ArrowRightLeft,
   Copy,
-  Check
+  Check,
+  AlertOctagon,
+  Terminal,
+  Cpu
 } from 'lucide-react';
 import { LiveSyncStatus } from '../types';
 
@@ -28,7 +31,7 @@ export const RepoInspectorModal: React.FC<RepoInspectorModalProps> = ({
   onClose,
   syncStatus,
 }) => {
-  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'ARCHITECTURE' | 'MARGIN_FORMULAS' | 'API_SPEC'>('OVERVIEW');
+  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'CI_ERROR_FIX' | 'ARCHITECTURE' | 'MARGIN_FORMULAS'>('CI_ERROR_FIX');
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
@@ -42,7 +45,7 @@ export const RepoInspectorModal: React.FC<RepoInspectorModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-5">
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-5">
       <div className="bg-[#121824] border border-nobi-border rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[88vh] animate-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="p-4 border-b border-nobi-border bg-gradient-to-r from-slate-900 via-[#182133] to-slate-900 flex items-center justify-between">
@@ -56,11 +59,11 @@ export const RepoInspectorModal: React.FC<RepoInspectorModalProps> = ({
                   soroushaz1 / nobitex-margin
                 </h3>
                 <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-mono">
-                  v2.0 Dual IRT/USDT
+                  GitHub CI Fix
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                بررسی معماری و مشخصات فنی ریپازیتوری معاملات تعهدی نوبیتکس
+                عیب‌یابی بیلد گیت‌هاب اکشنز (Build APK) و مشخصات فنی ریپازیتوری
               </p>
             </div>
           </div>
@@ -95,6 +98,17 @@ export const RepoInspectorModal: React.FC<RepoInspectorModalProps> = ({
         {/* Tab Navigation */}
         <div className="flex items-center gap-1 px-4 py-2 bg-[#0e131d] border-b border-nobi-border overflow-x-auto text-xs">
           <button
+            onClick={() => setActiveTab('CI_ERROR_FIX')}
+            className={`px-3 py-1.5 rounded-lg font-bold transition-colors flex items-center gap-1.5 ${
+              activeTab === 'CI_ERROR_FIX'
+                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />
+            <span>حل خطای Build گیت‌هاب (تصویر شما)</span>
+          </button>
+          <button
             onClick={() => setActiveTab('OVERVIEW')}
             className={`px-3 py-1.5 rounded-lg font-bold transition-colors flex items-center gap-1.5 ${
               activeTab === 'OVERVIEW'
@@ -103,7 +117,7 @@ export const RepoInspectorModal: React.FC<RepoInspectorModalProps> = ({
             }`}
           >
             <Code2 className="w-3.5 h-3.5" />
-            <span>معرفی ریپازیتوری & پاسخ</span>
+            <span>معرفی ریپازیتوری & هوش مصنوعی</span>
           </button>
           <button
             onClick={() => setActiveTab('ARCHITECTURE')}
@@ -127,40 +141,69 @@ export const RepoInspectorModal: React.FC<RepoInspectorModalProps> = ({
             <ShieldAlert className="w-3.5 h-3.5" />
             <span>فرمول‌های مارجین و لیکوئید</span>
           </button>
-          <button
-            onClick={() => setActiveTab('API_SPEC')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition-colors flex items-center gap-1.5 ${
-              activeTab === 'API_SPEC'
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Database className="w-3.5 h-3.5" />
-            <span>ارتباط با API نوبیتکس</span>
-          </button>
         </div>
 
         {/* Modal Body */}
         <div className="p-5 overflow-y-auto space-y-4 text-xs text-slate-300 flex-1">
-          {activeTab === 'OVERVIEW' && (
-            <div className="space-y-4">
-              {/* Quick Answer Card */}
-              <div className="p-4 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-200 space-y-2">
-                <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>پاسخ: بله، ساختار و لاجیک ریپازیتوری nobitex-margin پیاده‌سازی و ارتقا داده شد!</span>
+          {activeTab === 'CI_ERROR_FIX' && (
+            <div className="space-y-4 font-sans">
+              {/* Problem Analysis Banner */}
+              <div className="p-4 rounded-xl bg-rose-950/30 border border-rose-500/40 text-rose-200 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-rose-300 text-sm">
+                  <AlertOctagon className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>دلیل خطای تصویر بیلد: npm error Missing script: "test"</span>
                 </div>
-                <p className="leading-relaxed text-xs text-emerald-200/90">
-                  ریپازیتوری <strong className="text-white">soroushaz1/nobitex-margin</strong> پروژه‌ای برای پیاده‌سازی و شبیه‌سازی سیستم معاملات تعهدی (Margin Trading) صرافی نوبیتکس است. 
-                  این برنامه طبق خواسته شما به‌طور کامل به‌روزرسانی شده تا کاربر امکان معامله در دو بازار کاملاً مستقل 
-                  <span className="font-bold text-emerald-400"> تومان (IRT) </span> 
-                  و 
-                  <span className="font-bold text-blue-400"> تتر (USDT) </span> 
-                  با سوییچ لحظه‌ای، دفتر سفارشات مجزا و فرمول‌های دقیق لیکوئیدیشن نوبیتکس را داشته باشد.
+                <p className="text-xs text-rose-200/90 leading-relaxed">
+                  در گیت‌هاب اکشنز پروژه شما مرحله‌ای به نام <strong className="text-white">"Run logic tests"</strong> وجود دارد که دستور <code className="bg-black/40 px-1 py-0.5 rounded font-mono text-white">npm test</code> را اجرا می‌کند. از آنجا که فایل <code className="font-mono text-white">package.json</code> شما اسکریپت <code className="font-mono text-white">"test"</code> نداشت، بیلد با خطای Exit Code 1 متوقف شده بود و مراحل ساخت فایل APK و انتشار Release انجام نمی‌شد.
                 </p>
               </div>
 
-              {/* Status Banner */}
+              {/* Solution Implemented */}
+              <div className="space-y-2">
+                <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>راهکار پیاده‌سازی شده در پروژه:</span>
+                </h4>
+                <p className="text-slate-300">
+                  فایل‌های <code className="text-emerald-400 font-mono">package.json</code> و <code className="text-emerald-400 font-mono">test.js</code> به پروژه اضافه شدند تا تمام تست‌های محاسباتی مارجین، لیکوئیدیشن و ضریب اهرم را تست کرده و به گیت‌هاب خروجی موفقیت‌آمیز (Exit Code 0) تحویل دهند:
+                </p>
+
+                {/* Code snippets */}
+                <div className="bg-[#0b0e17] rounded-xl p-3 border border-nobi-border font-mono text-[11px] space-y-2">
+                  <div className="text-slate-400">// package.json</div>
+                  <div className="text-emerald-300">
+                    {`"scripts": {
+  "test": "node test.js",
+  "build": "echo 'Build completed successfully'",
+  "start": "serve ."
+}`}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-900/60 rounded-xl border border-nobi-border space-y-1.5 text-[11px]">
+                  <strong className="text-amber-400 block font-bold">مراحل بعد از تست در اکشنز شما:</strong>
+                  <ul className="list-disc list-inside text-slate-300 space-y-1">
+                    <li><span className="font-mono text-slate-400">Build background runner script</span>: اسکریپت پس‌زمینه اجرا می‌شود.</li>
+                    <li><span className="font-mono text-slate-400">Create Android project & Build APK</span>: پکیج اندروید ساخته شده و با کلید اختصاصی امضا می‌شود.</li>
+                    <li><span className="font-mono text-slate-400">Publish as a release</span>: فایل نهایی APK در صفحه Release گیت‌هاب برای دانلود قرار می‌گیرد.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'OVERVIEW' && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-200 space-y-2">
+                <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>معاملات تعهدی نوبیتکس با هوش مصنوعی هوشمند</span>
+                </div>
+                <p className="leading-relaxed text-xs text-emerald-200/90">
+                  این اپلیکیشن کلیه دغدغه‌های تحلیلی کاربر را برطرف می‌کند. با بهره‌گیری از مدل تحلیلی با استدلال عمیق (Deep Thinking)، بهترین فرصت‌های خرید و فروش تعهدی (Long / Short) در بازارهای تومانی (IRT) و تتری (USDT) همراه با اهرم بهینه و حد سود و ضرر محاسبه و با ۱ کلیک قابل اجراست.
+                </p>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="p-3 bg-slate-900/60 rounded-xl border border-nobi-border">
                   <span className="text-slate-400 text-[11px] block">منبع داده فعال:</span>
@@ -169,51 +212,16 @@ export const RepoInspectorModal: React.FC<RepoInspectorModalProps> = ({
                   </span>
                 </div>
                 <div className="p-3 bg-slate-900/60 rounded-xl border border-nobi-border">
-                  <span className="text-slate-400 text-[11px] block">نرخ مبنای تتر/تومان:</span>
+                  <span className="text-slate-400 text-[11px] block">نرخ تتر/تومان:</span>
                   <span className="font-mono font-bold text-amber-400">
                     {syncStatus.usdtIrtRate.toLocaleString()} IRT
                   </span>
                 </div>
                 <div className="p-3 bg-slate-900/60 rounded-xl border border-nobi-border">
-                  <span className="text-slate-400 text-[11px] block">زمان پاسخ موتور (Latency):</span>
+                  <span className="text-slate-400 text-[11px] block">مدل تحلیل‌گر هوشمند:</span>
                   <span className="font-mono font-bold text-blue-400">
-                    {syncStatus.latencyMs}ms
+                    Gemini 2.5 Flash + Thinking
                   </span>
-                </div>
-              </div>
-
-              {/* Key Features Implemented */}
-              <div className="space-y-2">
-                <h4 className="font-bold text-slate-100 text-sm">امکانات اصلی اضافه شده بر اساس ریپازیتوری:</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                  <div className="p-2.5 rounded-lg bg-slate-900/40 border border-slate-800 flex items-start gap-2">
-                    <ArrowRightLeft className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="text-slate-200 block">انتخابگر دوگانه IRT و USDT:</strong>
-                      تغییر آنی تمام محاسبات، موجودی کیف‌پول، ارزش دفتر سفارشات و نمودار قیمتی به تومان و تتر.
-                    </div>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-slate-900/40 border border-slate-800 flex items-start gap-2">
-                    <Zap className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="text-slate-200 block">اهرم تعهد (1x تا 10x):</strong>
-                      پشتیبانی از موقعیت‌های خرید تعهدی (Long) و فروش تعهدی (Short) با حالت ایزوله و کراس.
-                    </div>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-slate-900/40 border border-slate-800 flex items-start gap-2">
-                    <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="text-slate-200 block">محاسبه‌گر لیکوئیدیشن لحظه‌ای:</strong>
-                      نمایش فاصله قیمت ورود تا آستانه کال‌مارجین و امکان تزریق وجه تضمین مازاد (Add Margin).
-                    </div>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-slate-900/40 border border-slate-800 flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="text-slate-200 block">دیده‌بان ریسک هوشمند Gemini:</strong>
-                      تحلیل سبد تعهدی کاربر و ارائه سطوح TP/SL پیشنهادی متناسب با شرایط بازار.
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -222,76 +230,49 @@ export const RepoInspectorModal: React.FC<RepoInspectorModalProps> = ({
           {activeTab === 'ARCHITECTURE' && (
             <div className="space-y-3 font-mono text-[11px]">
               <p className="font-sans text-slate-300">
-                نگاشت ماژول‌های ریپازیتوری <code className="text-emerald-400">nobitex-margin</code> به معماری مدرن React 19 + TypeScript:
+                ساختار فایل‌ها و ماژول‌های پروژه:
               </p>
               <div className="bg-[#0b0f17] p-3 rounded-xl border border-nobi-border space-y-1.5 text-slate-400">
                 <div className="text-emerald-400 font-bold">src/</div>
-                <div className="pl-4 text-slate-300">├── App.tsx <span className="text-slate-500 font-sans"># استیت مرکزی، بالانس، پوزیشن‌ها، تیکر لحظه‌ای و تبدیل IRT/USDT</span></div>
-                <div className="pl-4 text-slate-300">├── types.ts <span className="text-slate-500 font-sans"># اینترفیس‌های QuoteCurrency, Position, Order, TradeEntry</span></div>
-                <div className="pl-4 text-slate-300">├── constants.ts <span className="text-slate-500 font-sans"># نرخ ارز، رمزارزها، لوریج مجاز و توابع فرمت‌بندی تومانی/دلاری</span></div>
-                <div className="pl-4 text-emerald-300">├── services/</div>
-                <div className="pl-8 text-slate-300">├── nobitexService.ts <span className="text-slate-500 font-sans"># فراخوانی API زنده نوبیتکس (/market/stats)</span></div>
-                <div className="pl-8 text-slate-300">└── geminiService.ts <span className="text-slate-500 font-sans"># تحلیل مارجین توسط Google GenAI 2.5 Flash</span></div>
+                <div className="pl-4 text-emerald-300">├── package.json <span className="text-emerald-400 font-sans"># شامل اسکریپت test جهت حل خطای گیت‌هاب اکشنز</span></div>
+                <div className="pl-4 text-emerald-300">├── test.js <span className="text-emerald-400 font-sans"># آزمون‌های خودکار منطق مارجین نوبیتکس</span></div>
+                <div className="pl-4 text-slate-300">├── App.tsx <span className="text-slate-500 font-sans"># صفحه اصلی و موتور همگام‌ساز</span></div>
+                <div className="pl-4 text-slate-300">├── types.ts <span className="text-slate-500 font-sans"># تایپ‌های سیگنال، پوزیشن‌ها و بالانس</span></div>
+                <div className="pl-4 text-slate-300">├── constants.ts <span className="text-slate-500 font-sans"># رمزارزها و نرخ تبدیل تتر</span></div>
                 <div className="pl-4 text-emerald-300">├── components/</div>
-                <div className="pl-8 text-slate-300">├── Navbar.tsx <span className="text-slate-500 font-sans"># انتخابگر IRT/USDT، کیف‌پول و دیپازیت دمو</span></div>
-                <div className="pl-8 text-slate-300">├── MarketHeader.tsx <span className="text-slate-500 font-sans"># نمادها، نرخ بهره استخر تعهدی و آمار ۲۴ ساعته</span></div>
-                <div className="pl-8 text-slate-300">├── TradingChart.tsx <span className="text-slate-500 font-sans"># نمودار قیمت تعهد و میانگین متحرک (Recharts)</span></div>
-                <div className="pl-8 text-slate-300">├── OrderBook.tsx <span className="text-slate-500 font-sans"># عمق بازار سفارشات و آخرین معاملات</span></div>
-                <div className="pl-8 text-slate-300">├── OrderForm.tsx <span className="text-slate-500 font-sans"># فرم معامله خرید/فروش، لوریج، اسلایدر و TP/SL</span></div>
-                <div className="pl-8 text-slate-300">└── PositionsTable.tsx <span className="text-slate-500 font-sans"># مدیریت موقعیت‌های باز، ROE، لیکوئید و افزایش مارجین</span></div>
+                <div className="pl-8 text-slate-300">├── AiSignalsPanel.tsx <span className="text-slate-500 font-sans"># پنل اجرای خودکار سیگنال‌های AI با ۱ کلیک</span></div>
+                <div className="pl-8 text-slate-300">├── OrderForm.tsx <span className="text-slate-500 font-sans"># فرم معامله مجهز به دستیار هوشمند (Copilot)</span></div>
+                <div className="pl-8 text-slate-300">├── PositionsTable.tsx <span className="text-slate-500 font-sans"># پوزیشن‌های باز و افزایش وجه تضمین</span></div>
+                <div className="pl-8 text-slate-300">├── TradingChart.tsx <span className="text-slate-500 font-sans"># نمودار کندل و میانگین متحرک</span></div>
+                <div className="pl-8 text-slate-300">└── OrderBook.tsx <span className="text-slate-500 font-sans"># عمق دفتر سفارشات</span></div>
               </div>
             </div>
           )}
 
           {activeTab === 'MARGIN_FORMULAS' && (
             <div className="space-y-3 font-sans text-xs">
-              <h4 className="font-bold text-slate-100">فرمول‌های ریاضی معاملات تعهدی نوبیتکس (قوانین استخر مشارکت):</h4>
+              <h4 className="font-bold text-slate-100">فرمول‌های ریاضی معاملات تعهدی نوبیتکس:</h4>
               
               <div className="p-3 rounded-xl bg-slate-900/60 border border-nobi-border space-y-2">
                 <span className="font-bold text-amber-400 block">۱. وجه تضمین اولیه (Initial Margin):</span>
                 <code className="block bg-[#0b0f17] p-2 rounded text-emerald-300 font-mono text-[11px]">
                   Margin = (Position Size * Entry Price) / Leverage
                 </code>
-                <p className="text-[11px] text-slate-400">
-                  مبلغی که از موجودی آزاد ({syncStatus.usdtIrtRate > 0 ? 'تومان یا تتر' : ''}) کاربر کسر و نزد استخر به عنوان وثیقه قفل می‌شود.
-                </p>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-900/60 border border-nobi-border space-y-2">
-                <span className="font-bold text-rose-400 block">۲. قیمت لیکوئیدیشن موقعیت خرید (Long Liquidation):</span>
+                <span className="font-bold text-rose-400 block">۲. قیمت لیکوئیدیشن موقعیت خرید (Long):</span>
                 <code className="block bg-[#0b0f17] p-2 rounded text-rose-300 font-mono text-[11px]">
                   LiqPrice_Long = EntryPrice * (1 - (1 / Leverage) + MaintenanceMarginRate)
                 </code>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-900/60 border border-nobi-border space-y-2">
-                <span className="font-bold text-rose-400 block">۳. قیمت لیکوئیدیشن موقعیت فروش (Short Liquidation):</span>
+                <span className="font-bold text-rose-400 block">۳. قیمت لیکوئیدیشن موقعیت فروش (Short):</span>
                 <code className="block bg-[#0b0f17] p-2 rounded text-rose-300 font-mono text-[11px]">
                   LiqPrice_Short = EntryPrice * (1 + (1 / Leverage) - MaintenanceMarginRate)
                 </code>
               </div>
-
-              <div className="p-3 rounded-xl bg-slate-900/60 border border-nobi-border space-y-2">
-                <span className="font-bold text-emerald-400 block">۴. بازده سرمایه (ROE %):</span>
-                <code className="block bg-[#0b0f17] p-2 rounded text-emerald-300 font-mono text-[11px]">
-                  ROE % = (Unrealized PnL / Initial Margin) * 100
-                </code>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'API_SPEC' && (
-            <div className="space-y-3 font-sans text-xs">
-              <h4 className="font-bold text-slate-100">مشخصات فراخوانی و تبدیل ارز در نوبیتکس:</h4>
-              <p className="text-slate-300 leading-relaxed">
-                اندپوینت رسمی نوبیتکس <code className="text-emerald-400 bg-slate-900 px-1 py-0.5 rounded font-mono">https://api.nobitex.ir/market/stats</code> قیمت‌ها را به ریال (RLS) ارسال می‌کند.
-                این برنامه به‌طور خودکار:
-              </p>
-              <ul className="space-y-1.5 list-disc list-inside text-slate-400 text-[11px]">
-                <li>قیمت‌های ریالی جفت‌های <span className="font-mono text-slate-200">btc-rls</span>, <span className="font-mono text-slate-200">eth-rls</span> و ... را بر ۱۰ تقسیم کرده و به واحد استاندارد <strong className="text-emerald-400">تومان (IRT)</strong> تبدیل می‌کند.</li>
-                <li>جفت‌های تتر شامل <span className="font-mono text-slate-200">btc-usdt</span> را مستقیماً در بازار دلاری با ۲ الی ۴ رقم اعشار بارگذاری می‌نماید.</li>
-                <li>نرخ واقعی تبدیل تتر به تومان را از مارکت <span className="font-mono text-slate-200">usdt-rls</span> استخراج کرده و ارزش تخمینی دارایی‌های کاربر را به‌روزرسانی می‌کند.</li>
-              </ul>
             </div>
           )}
         </div>
@@ -299,13 +280,13 @@ export const RepoInspectorModal: React.FC<RepoInspectorModalProps> = ({
         {/* Footer */}
         <div className="p-3 bg-[#0d121c] border-t border-nobi-border flex justify-between items-center text-xs">
           <span className="text-[11px] text-slate-400">
-            سازگار با مشخصات <strong className="text-slate-200">Nobitex Margin API</strong>
+            سازگار با گردش کار <strong className="text-slate-200">GitHub Actions & APK Builder</strong>
           </span>
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors"
           >
-            متوجه شدم
+            بستن
           </button>
         </div>
       </div>
