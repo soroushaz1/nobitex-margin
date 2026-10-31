@@ -1,6 +1,6 @@
 export type QuoteCurrency = 'IRT' | 'USDT';
 
-export type OrderSide = 'BUY' | 'SELL'; // Buy = Long (تعهد خرید), Sell = Short (تعهد فروش)
+export type OrderSide = 'BUY' | 'SELL'; // Buy = Long, Sell = Short in Margin
 export type OrderType = 'LIMIT' | 'MARKET' | 'STOP_LIMIT';
 export type MarginMode = 'ISOLATED' | 'CROSS';
 
@@ -72,7 +72,6 @@ export interface Position {
   takeProfit?: number;
   stopLoss?: number;
   openedAt: string;
-  aiSuggested?: boolean;
 }
 
 export interface Order {
@@ -113,32 +112,4 @@ export interface GeminiAnalysisResult {
   suggestedStopLoss: number;
   suggestedTakeProfit: number;
   liquidationProximityWarning: string;
-}
-
-export interface AITradeSignal {
-  id: string;
-  symbol: string;
-  nameFa: string;
-  side: OrderSide; // BUY = Long, SELL = Short
-  quoteCurrency: QuoteCurrency;
-  recommendedLeverage: number;
-  entryPrice: number;
-  takeProfitPrice: number;
-  stopLossPrice: number;
-  expectedProfitPct: number;
-  maxRiskPct: number;
-  riskRewardRatio: string;
-  confidenceScore: number; // 0-100
-  timeframe: 'اسکالپ (15m)' | 'کوتاه‌مدت (1h)' | 'روندی (4h)';
-  rationale: string;
-  triggerEvent: string;
-  timestamp: string;
-}
-
-export interface LiveSyncStatus {
-  source: 'NOBITEX_PUBLIC_API' | 'SIMULATED_ENGINE';
-  lastUpdated: string;
-  usdtIrtRate: number;
-  latencyMs: number;
-  isConnected: boolean;
 }
