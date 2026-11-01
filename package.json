@@ -8,6 +8,12 @@
     "dev-backend": "npm run dev --prefix backend",
     "dev": "concurrently \"npm run dev-frontend\" \"npm run dev-backend\""
   },
+  "dependencies": {
+    "@capacitor/android": "8.6.0",
+    "@capacitor/background-runner": "3.0.0",
+    "@capacitor/cli": "8.6.0",
+    "@capacitor/core": "8.6.0"
+  },
   "devDependencies": {
     "concurrently": "latest"
   }
