@@ -257,24 +257,35 @@ export class Nobitex {
   }
 
   // ---------------- authenticated ----------------
-  async marginBalanceRials() {
+  async marginBalance(currency = 'rls') {
+    const wanted = String(currency).toLowerCase();
+    const key = wanted.toUpperCase();
+    const findWallet = (wallets) => {
+      if (Array.isArray(wallets)) return wallets.find((x) => String(x.currency).toLowerCase() === wanted);
+      if (!wallets || typeof wallets !== 'object') return null;
+      return wallets[key] || wallets[wanted] || Object.entries(wallets).find(([name]) => name.toLowerCase() === wanted)?.[1] || null;
+    };
+
     // Prefer v2 wallets filtered to the margin wallet; fall back to the legacy list.
     try {
       const d = await this.request('GET', '/v2/wallets', { params: { type: 'margin' }, auth: true });
-      const w = d.wallets || {};
-      const rls = w.RLS || w.rls;
-      if (rls) return { balance: Number(rls.balance), blocked: Number(rls.blocked || 0) };
+      const wallet = findWallet(d.wallets);
+      if (wallet) return { balance: Number(wallet.balance), blocked: Number(wallet.blocked || 0) };
     } catch (e) {
       if (e.status && e.status !== 404 && e.status !== 400) throw e;
     }
     const d = await this.request('GET', '/users/wallets/list', { params: { type: 'margin' }, auth: true });
     const list = d.wallets || [];
-    const rls = list.find((x) => String(x.currency).toLowerCase() === 'rls');
-    if (!rls) throw new NobitexError('کیف پول تعهدی ریالی پیدا نشد');
+    const wallet = findWallet(list);
+    if (!wallet) throw new NobitexError(`کیف پول تعهدی ${wanted.toUpperCase()} پیدا نشد`);
     return {
-      balance: Number(rls.activeBalance ?? rls.balance),
-      blocked: Number(rls.blockedBalance ?? rls.blocked ?? 0),
+      balance: Number(wallet.activeBalance ?? wallet.balance),
+      blocked: Number(wallet.blockedBalance ?? wallet.blocked ?? 0),
     };
+  }
+
+  marginBalanceRials() {
+    return this.marginBalance('rls');
   }
 
   delegationLimit(market) {

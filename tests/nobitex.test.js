@@ -47,6 +47,7 @@ test('signed request: headers, signature over ts+METHOD+path?query+body, URL-saf
   const api = new Nobitex({ apiKey: 'PUBKEY', privateKey: k.pem, nacl, fetchFn, now: () => 1_750_000_000_000 });
   await api.positions('active');
   await api.addMarginOrder({ src: 'btc', dst: 'rls', side: 'buy', amount: '0.001', price: '100', leverage: 2, execution: 'market' });
+  await api.addMarginOrder({ src: 'btc', dst: 'usdt', side: 'sell', amount: '0.001', price: '100', leverage: 2, execution: 'market' });
 
   const spki = createPublicKey(k.privateKey);
   const signed = calls.filter((c) => !c.url.includes('/v3/orderbook/'));
@@ -64,6 +65,8 @@ test('signed request: headers, signature over ts+METHOD+path?query+body, URL-saf
   assert.equal(signed[0].url, 'https://apiv2.nobitex.ir/positions/list?status=active');
   const body = JSON.parse(signed[1].init.body);
   assert.deepEqual(body, { srcCurrency: 'btc', dstCurrency: 'rls', type: 'buy', amount: '0.001', price: '100', leverage: '2', execution: 'market' });
+  const usdtBody = JSON.parse(signed[2].init.body);
+  assert.deepEqual(usdtBody, { srcCurrency: 'btc', dstCurrency: 'usdt', type: 'sell', amount: '0.001', price: '100', leverage: '2', execution: 'market' });
 });
 
 test('failed status is raised as error with the exchange message', async () => {
@@ -84,17 +87,19 @@ test('margin balance: v2 wallets, then legacy list fallback', async () => {
   const k = nodeKey();
   let api = new Nobitex({
     apiKey: 'K', privateKey: k.pem, nacl,
-    fetchFn: mockFetch([[(u) => u.includes('/v2/wallets'), () => ({ body: { status: 'ok', wallets: { RLS: { balance: '9960000', blocked: '0' } } } })]]),
+    fetchFn: mockFetch([[(u) => u.includes('/v2/wallets'), () => ({ body: { status: 'ok', wallets: { RLS: { balance: '9960000', blocked: '0' }, USDT: { balance: '12.5', blocked: '2' } } } })]]),
   });
   assert.deepEqual(await api.marginBalanceRials(), { balance: 9960000, blocked: 0 });
+  assert.deepEqual(await api.marginBalance('USDT'), { balance: 12.5, blocked: 2 });
   api = new Nobitex({
     apiKey: 'K', privateKey: k.pem, nacl,
     fetchFn: mockFetch([
       [(u) => u.includes('/v2/wallets'), () => ({ status: 404, body: {} })],
-      [(u) => u.includes('/users/wallets/list'), () => ({ body: { status: 'ok', wallets: [{ currency: 'rls', activeBalance: '9000000', blockedBalance: '960000' }] } })],
+      [(u) => u.includes('/users/wallets/list'), () => ({ body: { status: 'ok', wallets: [{ currency: 'rls', activeBalance: '9000000', blockedBalance: '960000' }, { currency: 'usdt', activeBalance: '15', blockedBalance: '3' }] } })],
     ]),
   });
   assert.deepEqual(await api.marginBalanceRials(), { balance: 9000000, blocked: 960000 });
+  assert.deepEqual(await api.marginBalance('usdt'), { balance: 15, blocked: 3 });
 });
 
 // An exchange that enforces the 30-second timestamp window like Nobitex does.

@@ -3,7 +3,7 @@
 // (take-profit + stop-loss). Orders are never retried blindly.
 
 import { boundedMarketPrice } from './risk.js';
-import { floorToStep, sleep } from './util.js';
+import { floorToStep, sleep, fmtNum, fmtToman } from './util.js';
 import { bestOf } from './market.js';
 
 export async function currentBest(api, symbol) {
@@ -48,7 +48,7 @@ export function exactAmount(v) {
  * position size in the coin is `liability` (equal to `delegatedAmount` plus interest,
  * e.g. 0.001995 ZEC, 0.0021954888 ETH), and `totalAsset` is a rial value. The exact
  * value comes first — rounding it down leaves an unclosable remainder. A value worth
- * far more than the whole position (i.e. a rial number) is never used as a coin amount.
+ * far more than the whole position (i.e. a quote-currency value) is never used as a coin amount.
  * The planned amount is used only when the exchange gives no usable size.
  */
 export function positionAmounts(p, fallbackAmount, step, refPrice) {
@@ -71,7 +71,7 @@ export function positionAmounts(p, fallbackAmount, step, refPrice) {
   return out;
 }
 
-/** Unrealized profit in rials (exchange value if given, else computed from the book). */
+/** Unrealized profit in the market's quote currency (exchange value if given, else computed from the book). */
 export function positionPnl(p, best, fallbackAmount, step) {
   const side = positionSide(p);
   const collateral = Number(p.collateral);
@@ -291,12 +291,14 @@ export async function closeNow(api, position, precision, fallbackAmount, onLog =
       log(`بستن (${a.execution === 'market' ? 'بازار' : 'محدود'}، مقدار ${a.amount}) رد شد: ${e.message}`);
     }
   }
-  const valueRials = Number(amounts[0]) * mid;
-  const minOrder = Number(precision.minOrderRials) || 0;
+  const valueQuote = Number(amounts[0]) * mid;
+  const minOrder = Number(precision.minOrderValue ?? precision.minOrderRials) || 0;
   if (!placed) {
     let msg = lastErr ? lastErr.message : 'سفارش بستن ثبت نشد';
-    if (minOrder && valueRials < minOrder) {
-      msg = `فقط مقدار خیلی کمی (${amounts[0]} ${String(p.srcCurrency).toUpperCase()}، حدود ${Math.round(valueRials / 10).toLocaleString('en-US')} تومان) از این پوزیشن مانده که نوبیتکس سفارشش را قبول نکرد. آن را از اپ نوبیتکس («بستن کامل») ببندید تا وثیقه آزاد شود. (${msg})`;
+    if (minOrder && valueQuote < minOrder) {
+      const dst = String(p.dstCurrency || 'rls').toLowerCase();
+      const valueText = dst === 'usdt' ? `${fmtNum(valueQuote, 4)} USDT` : `${fmtToman(valueQuote)} تومان`;
+      msg = `فقط مقدار خیلی کمی (${amounts[0]} ${String(p.srcCurrency).toUpperCase()}، حدود ${valueText}) از این پوزیشن مانده که نوبیتکس سفارشش را قبول نکرد. آن را از اپ نوبیتکس («بستن کامل») ببندید تا وثیقه آزاد شود. (${msg})`;
     }
     const err = new Error(msg);
     err.log = steps;

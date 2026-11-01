@@ -2,7 +2,7 @@
 // big it may be. Most rules are user-adjustable (RULES); a few sanity checks are fixed
 // because without them a trade cannot be executed or protected correctly.
 
-import { floorToStep, roundToStep } from './util.js';
+import { floorToStep, roundToStep, fmtNum, fmtToman } from './util.js';
 
 // [min, max, default] for every user-adjustable rule.
 export const RULES = {
@@ -27,6 +27,7 @@ export const FIXED = {
 };
 
 export const DEFAULT_MIN_ORDER_RIALS = 3_000_000;
+export const DEFAULT_MIN_ORDER_USDT = 1;
 
 function clamp(v, [min, max, def], { int = false, step = 0 } = {}) {
   let n = Number(v);
@@ -40,6 +41,7 @@ function clamp(v, [min, max, def], { int = false, step = 0 } = {}) {
 /** Clamp user settings into the allowed ranges. */
 export function effectiveSettings(s = {}) {
   return {
+    quoteCurrency: s.quoteCurrency === 'USDT' ? 'USDT' : 'IRT',
     leverage: clamp(s.leverage, RULES.leverage, { step: 0.5 }),
     riskPct: clamp(s.riskPct, RULES.riskPct, { step: 0.1 }),
     maxOpenPositions: clamp(s.maxOpenPositions, RULES.maxOpenPositions, { int: true }),
@@ -56,6 +58,7 @@ export function effectiveSettings(s = {}) {
 export function scanRules(s = {}, exclude = []) {
   const e = effectiveSettings(s);
   return {
+    quoteCurrency: e.quoteCurrency,
     minConfidence: e.minConfidence,
     minRewardRisk: e.minRewardRisk,
     maxSpreadPct: e.maxSpreadPct,
@@ -68,8 +71,9 @@ export function scanRules(s = {}, exclude = []) {
  * Build an executable plan from an AI idea.
  * idea: { symbol, side: 'long'|'short', stop_loss_pct, take_profit_pct, confidence }
  * ctx:  { price, balanceRials (free), equityRials (free + locked in positions),
+ *         Values named *Rials are in the selected market's quote currency for compatibility.
  *         market: {maxLeverage, buyEnabled, sellEnabled, src, dst},
- *         amountStep, priceStep, minOrderRials, settings, tradesToday, openPositions,
+ *         amountStep, priceStep, minOrderValue, settings, tradesToday, openPositions,
  *         openSymbols: [...], spreadPct }
  * Returns { ok: true, plan } or { ok: false, reasons: [...] }.
  */
@@ -120,7 +124,8 @@ export function buildPlan(idea, ctx) {
 
   const amountStep = Number(ctx.amountStep) || 1e-6;
   const priceStep = Number(ctx.priceStep) || 10;
-  const minOrder = Number(ctx.minOrderRials) || DEFAULT_MIN_ORDER_RIALS;
+  const minOrder = Number(ctx.minOrderValue ?? ctx.minOrderRials) ||
+    (market.dst === 'usdt' ? DEFAULT_MIN_ORDER_USDT : DEFAULT_MIN_ORDER_RIALS);
 
   let notional;
   if (s.sizing === 'equal') {
@@ -128,8 +133,8 @@ export function buildPlan(idea, ctx) {
     notional = (equity / s.maxOpenPositions) * leverage;
   } else {
     // fixed risk: loss at the stop = riskPct of equity
-    const riskRials = (equity * s.riskPct) / 100;
-    notional = riskRials / ((stopPct + FIXED.FEE_BUFFER_PCT) / 100);
+    const riskBudget = (equity * s.riskPct) / 100;
+    notional = riskBudget / ((stopPct + FIXED.FEE_BUFFER_PCT) / 100);
   }
   const maxNotional = balance * FIXED.MAX_COLLATERAL_SHARE * leverage;
   const cappedByBalance = notional > maxNotional;
@@ -138,12 +143,16 @@ export function buildPlan(idea, ctx) {
   const amount = floorToStep(notional / price, amountStep);
   const realNotional = Number(amount) * price;
   if (!(Number(amount) > 0) || realNotional < minOrder) {
+    const minOrderText = market.dst === 'usdt'
+      ? `${fmtNum(minOrder, 4)} USDT`
+      : `${fmtToman(minOrder)} تومان`;
+    const notionalText = market.dst === 'usdt'
+      ? `${fmtNum(realNotional, 4)} USDT`
+      : `${fmtToman(realNotional)} تومان`;
     return {
       ok: false,
       reasons: [
-        `حجم مجاز معامله (${Math.round(realNotional / 10).toLocaleString('en-US')} تومان) از حداقل سفارش نوبیتکس (${Math.round(
-          minOrder / 10,
-        ).toLocaleString('en-US')} تومان) کمتر است؛ ریسک هر معامله یا اهرم را بیشتر کنید`,
+        `حجم مجاز معامله (${notionalText}) از حداقل سفارش نوبیتکس (${minOrderText}) کمتر است؛ ریسک هر معامله یا اهرم را بیشتر کنید`,
       ],
     };
   }

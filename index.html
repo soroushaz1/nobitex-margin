@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>دستیار تعهدی</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Lock / first-run PIN screen -->
+  <section id="lock" class="lock">
+    <div class="lock-box">
+      <div class="logo">⇅</div>
+      <h1>دستیار تعهدی</h1>
+      <p id="lock-hint" class="muted">رمز را وارد کنید</p>
+      <input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="••••" />
+      <input id="pin2" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="تکرار رمز" hidden />
+      <button id="pin-btn" class="btn primary wide">ورود</button>
+      <p id="lock-err" class="err"></p>
+    </div>
+  </section>
+
+  <main id="app" hidden>
+    <header class="top">
+      <div>
+        <div class="muted small">موجودی آزاد تعهدی</div>
+        <div id="balance" class="balance">—</div>
+        <div id="balance-sub" class="muted small"></div>
+      </div>
+      <div class="top-actions">
+        <div class="seg currency-seg" id="currency-seg" aria-label="بازار تعهدی">
+          <button data-currency="IRT" type="button">IRT · تومان</button>
+          <button data-currency="USDT" type="button">USDT · تتر</button>
+        </div>
+        <span id="mode-badge" class="badge">آزمایشی</span>
+      </div>
+    </header>
+
+    <!-- Suggestion tab -->
+    <section id="tab-suggest" class="tab">
+      <button id="analyze-btn" class="btn primary wide big">تحلیل بازار</button>
+      <p id="progress" class="muted small center"></p>
+      <div id="suggestion"></div>
+    </section>
+
+    <!-- Positions tab -->
+    <section id="tab-positions" class="tab" hidden>
+      <div class="row-between">
+        <h2>پوزیشن‌های باز</h2>
+        <button id="refresh-pos" class="btn ghost small">به‌روزرسانی</button>
+      </div>
+      <div id="positions"></div>
+    </section>
+
+    <!-- Journal tab -->
+    <section id="tab-journal" class="tab" hidden>
+      <h2>کارنامه پیشنهادها</h2>
+      <div id="stats" class="stats"></div>
+      <div id="journal"></div>
+    </section>
+
+    <!-- Settings tab -->
+    <section id="tab-settings" class="tab" hidden>
+      <h2>حالت معامله</h2>
+      <div class="card">
+        <div class="seg" id="mode-seg">
+          <button data-mode="paper">آزمایشی</button>
+          <button data-mode="live">پول واقعی</button>
+        </div>
+        <p class="muted small">در حالت آزمایشی هیچ سفارشی به نوبیتکس ارسال نمی‌شود؛ نتیجه پیشنهادها با قیمت‌های واقعی بازار سنجیده می‌شود.</p>
+        <div class="two">
+          <label>موجودی آزمایشی IRT (تومان)<input id="s-paper-irt" inputmode="numeric" /></label>
+          <label>موجودی آزمایشی USDT<input id="s-paper-usdt" inputmode="decimal" /></label>
+        </div>
+      </div>
+
+      <h2>مدیریت ریسک</h2>
+      <div class="card">
+        <label>روش تعیین حجم هر معامله
+          <select id="s-sizing">
+            <option value="risk">ریسک ثابت: ضرر هر معامله = درصد ثابتی از کل سرمایه</option>
+            <option value="equal">تقسیم مساوی: وثیقه هر معامله = کل سرمایه ÷ تعداد پوزیشن هم‌زمان</option>
+          </select>
+        </label>
+        <div class="two">
+          <label>اهرم (۱ تا ۱۰)<input id="s-lev" type="number" min="1" max="10" step="0.5" inputmode="decimal" /></label>
+          <label>ریسک هر معامله ٪ (۰٫۵ تا ۲۰)<input id="s-risk" type="number" min="0.5" max="20" step="0.5" inputmode="decimal" /></label>
+          <label>پوزیشن باز هم‌زمان (۱ تا ۱۰)<input id="s-maxpos" type="number" min="1" max="10" step="1" inputmode="numeric" /></label>
+          <label>معامله در روز (۰ = نامحدود)<input id="s-day" type="number" min="0" max="50" step="1" inputmode="numeric" /></label>
+          <label>حداقل اطمینان تحلیل (۰ تا ۹۰)<input id="s-conf" type="number" min="0" max="90" step="5" inputmode="numeric" /></label>
+          <label>حداقل نسبت سود به ضرر (۱ تا ۳)<input id="s-rr" type="number" min="1" max="3" step="0.1" inputmode="decimal" /></label>
+          <label>حداکثر اختلاف خرید/فروش ٪<input id="s-spread" type="number" min="0.1" max="3" step="0.1" inputmode="decimal" /></label>
+          <label>حداقل حجم روزانه (میلیارد تومان، ۰ = همه)<input id="s-vol" type="number" min="0" max="100" step="0.5" inputmode="decimal" /></label>
+        </div>
+        <p id="risk-preview" class="note small"></p>
+        <p class="muted small">دو چیز ثابت است: هر معامله حتماً حد ضرر دارد، و هیچ سفارشی بدون تایید شما ثبت نمی‌شود. اهرم واقعی هم از سقف خود نوبیتکس برای آن بازار بیشتر نمی‌شود.</p>
+      </div>
+
+      <h2>هوش مصنوعی</h2>
+      <div class="card">
+        <label>آدرس سرویس (سازگار با OpenAI)<input id="s-ai-url" dir="ltr" placeholder="https://.../v1" /></label>
+        <label>نام مدل<input id="s-ai-model" dir="ltr" placeholder="model name" /></label>
+        <label>کلید سرویس<input id="s-ai-key" dir="ltr" type="password" placeholder="sk-..." /></label>
+        <label>تعداد بازارهای بررسی‌شده (۳ تا ۲۰)<input id="s-cands" type="number" min="3" max="20" step="1" inputmode="numeric" /></label>
+        <button id="test-ai" class="btn ghost">آزمایش اتصال</button>
+      </div>
+
+      <h2>بررسی خودکار</h2>
+      <div class="card">
+        <label class="check"><input type="checkbox" id="bg-enabled" /> هر حدود ۱۵ دقیقه بازار را بررسی کن و اگر فرصت خوبی بود اعلان بده</label>
+        <p class="muted small">فقط اعلان می‌دهد؛ ثبت سفارش همیشه با تایید خود شماست. بررسی پس‌زمینه فقط از داده‌های عمومی بازار و هوش مصنوعی استفاده می‌کند و به کلید نوبیتکس دسترسی ندارد.</p>
+        <p class="muted small">در گوشی‌های سامسونگ: تنظیمات ← برنامه‌ها ← دستیار تعهدی ← باتری ← «بدون محدودیت»، وگرنه اندروید بررسی‌ها را متوقف می‌کند.</p>
+        <p id="bg-status" class="small"></p>
+        <button id="bg-run" class="btn ghost small">یک بار همین الان بررسی کن</button>
+      </div>
+
+      <h2>کلید API نوبیتکس</h2>
+      <div class="card">
+        <label>کلید (Nobitex-Key)<input id="s-nb-key" dir="ltr" type="password" /></label>
+        <label>کلید خصوصی<textarea id="s-nb-priv" dir="ltr" rows="3"></textarea></label>
+        <p class="muted small">کلید را فقط با دسترسی «معامله» بسازید، <b>بدون دسترسی برداشت</b>. کلیدها با رمز ورود رمزنگاری و فقط روی همین گوشی ذخیره می‌شوند.</p>
+        <details>
+          <summary class="small">اگر نوبیتکس کلید عمومی از شما خواست</summary>
+          <p class="muted small">یک جفت کلید روی گوشی بسازید، کلید عمومی را در نوبیتکس ثبت کنید و کلید دریافتی را در خانه «کلید» بگذارید.</p>
+          <button id="gen-key" class="btn ghost small">ساخت جفت کلید</button>
+          <pre id="gen-out" class="mono" dir="ltr"></pre>
+        </details>
+        <button id="test-nb" class="btn ghost">آزمایش اتصال</button>
+      </div>
+
+      <button id="save-settings" class="btn primary wide">ذخیره تنظیمات</button>
+      <p id="settings-msg" class="center small"></p>
+
+      <h2>امنیت</h2>
+      <div class="card">
+        <label>قفل خودکار بعد از رفتن به پس‌زمینه
+          <select id="s-lock">
+            <option value="5">۵ دقیقه</option>
+            <option value="30">۳۰ دقیقه</option>
+            <option value="120">۲ ساعت</option>
+            <option value="0">هیچ‌وقت (فقط هنگام باز کردن دوباره برنامه)</option>
+          </select>
+        </label>
+        <button id="lock-now" class="btn ghost">قفل کردن</button>
+        <button id="wipe" class="btn danger">پاک کردن همه اطلاعات</button>
+      </div>
+      <p class="muted small center">این برنامه ابزار کمکی است و مشاوره مالی نیست. معاملات اهرمی می‌تواند به از دست رفتن کل وثیقه منجر شود.</p>
+    </section>
+
+    <nav class="tabs">
+      <button data-tab="suggest" class="active"><span>✦</span>پیشنهاد</button>
+      <button data-tab="positions"><span>▤</span>پوزیشن‌ها</button>
+      <button data-tab="journal"><span>◷</span>کارنامه</button>
+      <button data-tab="settings"><span>⚙</span>تنظیمات</button>
+    </nav>
+  </main>
+
+  <!-- Confirm dialog -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-box">
+      <div id="modal-body"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel" class="btn ghost">انصراف</button>
+        <button id="modal-ok" class="btn primary">تایید</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="vendor/nacl-fast.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

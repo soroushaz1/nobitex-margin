@@ -66,6 +66,7 @@ export async function decryptSecrets(pin, blob) {
 
 export const DEFAULT_SETTINGS = {
   mode: 'paper', // 'paper' | 'live'
+  quoteCurrency: 'IRT',
   leverage: 2,
   riskPct: 2,
   maxOpenPositions: 3,
@@ -77,6 +78,7 @@ export const DEFAULT_SETTINGS = {
   lockMinutes: 30,
   sizing: 'risk',
   paperBalanceToman: 996000,
+  paperBalanceUsdt: 15,
   aiBaseUrl: '',
   aiModel: '',
   candidates: 10,

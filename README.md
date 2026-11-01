@@ -30,6 +30,14 @@ The project is organized into two main directories:
 
 *   `frontend/`: Contains the Frontend application code.
 *   `backend/`: Contains the Node.js/Express server code to proxy Google Cloud API calls.
+*   `www/`: Contains the shipped mobile margin-trading app.
+
+## Margin Quote Currency
+
+The shipped app has an IRT / USDT selector in its header. It filters margin markets and
+uses the corresponding quote-currency wallet and paper balance for analysis and orders.
+Only quote currencies and markets reported by Nobitex are available; IRT and USDT paper
+balances are configured separately in Settings.
 
 ## Backend Environment Variables
 
