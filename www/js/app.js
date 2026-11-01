@@ -1282,6 +1282,21 @@ const RISK_FIELDS = [
   ['s-vol', 'minVolumeBillionToman'],
 ];
 
+const PLAN_SETTINGS = [
+  'mode',
+  'quoteCurrency',
+  'leverage',
+  'riskPct',
+  'maxOpenPositions',
+  'maxTradesPerDay',
+  'minConfidence',
+  'minRewardRisk',
+  'maxSpreadPct',
+  'sizing',
+  'paperBalanceToman',
+  'paperBalanceUsdt',
+];
+
 function readRiskForm() {
   const raw = { sizing: $('s-sizing').value, quoteCurrency: activeQuote() };
   for (const [id, key] of RISK_FIELDS) raw[key] = normalizeDigits($(id).value);
@@ -1359,6 +1374,7 @@ async function setMode(mode) {
 
 async function saveSettings() {
   const num = (id) => Number(normalizeDigits($(id).value));
+  const previousSettings = { ...state.settings };
   const nbPriv = $('s-nb-priv').value.trim();
   if (nbPriv) {
     try {
@@ -1384,10 +1400,19 @@ async function saveSettings() {
     nbPriv,
   };
   if ((!nbPriv || !state.secrets.nbKey) && state.settings.mode === 'live') state.settings.mode = 'paper';
+  if (
+    state.current &&
+    state.current.status === 'new' &&
+    state.current.idea.decision === 'trade' &&
+    PLAN_SETTINGS.some((key) => previousSettings[key] !== state.settings[key])
+  ) {
+    state.current = null;
+  }
   saveSettingsOnly();
   store.set('secrets', await encryptSecrets(state.pin, state.secrets));
   makeApi();
   fillSettingsForm();
+  renderSuggestion();
   syncBgConfig();
   $('settings-msg').textContent = 'ذخیره شد ✓';
   setTimeout(() => ($('settings-msg').textContent = ''), 2500);
