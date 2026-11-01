@@ -496,7 +496,7 @@ async function onUnlocked() {
 }
 
 function renderCurrencySeg() {
-  document.querySelectorAll('#currency-seg button').forEach((button) => {
+  document.querySelectorAll('[data-currency]').forEach((button) => {
     button.classList.toggle('on', button.dataset.currency === activeQuote());
     button.setAttribute('aria-pressed', String(button.dataset.currency === activeQuote()));
   });
@@ -1365,10 +1365,12 @@ async function saveSettings() {
       parsePrivateKey(nbPriv);
     } catch (e) {
       $('settings-msg').innerHTML = `<span class="err">${esc(e.message)}</span>`;
-      return;
+      return false;
     }
   }
-  Object.assign(state.settings, readRiskForm(), {
+  const settings = {
+    ...state.settings,
+    ...readRiskForm(),
     quoteCurrency: activeQuote(),
     paperBalanceToman: num('s-paper-irt') || DEFAULT_SETTINGS.paperBalanceToman,
     paperBalanceUsdt: num('s-paper-usdt') || DEFAULT_SETTINGS.paperBalanceUsdt,
@@ -1376,26 +1378,33 @@ async function saveSettings() {
     aiModel: $('s-ai-model').value.trim(),
     candidates: Math.min(20, Math.max(3, Math.round(num('s-cands')) || 10)),
     lockMinutes: Number($('s-lock').value),
-  });
-  state.secrets = {
+  };
+  const secrets = {
     ...state.secrets,
     aiKey: $('s-ai-key').value.trim(),
     nbKey: $('s-nb-key').value.trim(),
     nbPriv,
   };
-  if ((!nbPriv || !state.secrets.nbKey) && state.settings.mode === 'live') state.settings.mode = 'paper';
-  saveSettingsOnly();
-  store.set('secrets', await encryptSecrets(state.pin, state.secrets));
+  if ((!nbPriv || !secrets.nbKey) && settings.mode === 'live') settings.mode = 'paper';
+  const encryptedSecrets = await encryptSecrets(state.pin, secrets);
+  store.set('secrets', encryptedSecrets);
+  store.set('settings', settings);
+  state.settings = settings;
+  state.secrets = secrets;
   makeApi();
   fillSettingsForm();
   syncBgConfig();
   $('settings-msg').textContent = 'ذخیره شد ✓';
   setTimeout(() => ($('settings-msg').textContent = ''), 2500);
   refreshBalance();
+  return true;
 }
 
 async function testAi() {
-  await saveSettings();
+  if (!(await saveSettings())) {
+    toast($('settings-msg').textContent || 'تنظیمات ذخیره نشد', true);
+    return;
+  }
   const s = state.settings;
   try {
     const r = await askModel(
@@ -1410,7 +1419,10 @@ async function testAi() {
 }
 
 async function testNobitex() {
-  await saveSettings();
+  if (!(await saveSettings())) {
+    toast($('settings-msg').textContent || 'تنظیمات ذخیره نشد', true);
+    return;
+  }
   try {
     await state.api.marketStats();
     if (!state.api.hasAuth) {
@@ -1421,6 +1433,24 @@ async function testNobitex() {
     toast(`کلید معتبر است ✓ موجودی تعهدی: ${fmtQuote(b.balance)}`);
   } catch (e) {
     toast('خطا: ' + e.message, true);
+  }
+}
+
+async function runButtonAction(id, busyText, action) {
+  const button = $(id);
+  if (button.disabled) return;
+  const text = button.textContent;
+  button.disabled = true;
+  button.textContent = busyText;
+  button.setAttribute('aria-busy', 'true');
+  try {
+    await action();
+  } catch (e) {
+    toast('خطا: ' + (e && e.message ? e.message : e), true);
+  } finally {
+    button.disabled = false;
+    button.textContent = text;
+    button.removeAttribute('aria-busy');
   }
 }
 
@@ -1477,13 +1507,13 @@ function init() {
   $('pin').addEventListener('keydown', (e) => e.key === 'Enter' && ($('pin2').hidden ? submitPin() : $('pin2').focus()));
   $('pin2').addEventListener('keydown', (e) => e.key === 'Enter' && submitPin());
   document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
-  document.querySelectorAll('#currency-seg button').forEach((b) => (b.onclick = () => setQuoteCurrency(b.dataset.currency)));
+  document.querySelectorAll('[data-currency]').forEach((b) => (b.onclick = () => setQuoteCurrency(b.dataset.currency)));
   document.querySelectorAll('#mode-seg button').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
   $('analyze-btn').onclick = analyze;
   $('refresh-pos').onclick = renderPositions;
-  $('save-settings').onclick = saveSettings;
-  $('test-ai').onclick = testAi;
-  $('test-nb').onclick = testNobitex;
+  $('save-settings').onclick = () => runButtonAction('save-settings', 'در حال ذخیره…', saveSettings);
+  $('test-ai').onclick = () => runButtonAction('test-ai', 'در حال بررسی…', testAi);
+  $('test-nb').onclick = () => runButtonAction('test-nb', 'در حال بررسی…', testNobitex);
   $('gen-key').onclick = generateKeys;
   $('lock-now').onclick = lockNow;
   $('wipe').onclick = wipe;

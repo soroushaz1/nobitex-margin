@@ -46,7 +46,11 @@ h2 { font-size: 16px; margin: 22px 0 8px; color: var(--muted); font-weight: 600;
 
 /* Layout */
 main { padding: 12px 16px calc(84px + env(safe-area-inset-bottom)); max-width: 640px; margin: 0 auto; }
-.top { display: flex; justify-content: space-between; align-items: center; padding: 6px 0 14px; }
+.top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 0 14px; }
+.top-actions { display: flex; align-items: center; gap: 8px; }
+.currency-seg { margin: 0; padding: 3px; }
+.currency-seg button { white-space: nowrap; padding: 6px 8px; font-size: 11px; }
+.currency-seg button.on { background: var(--accent); color: #fff; }
 .balance { font-size: 24px; font-weight: 700; }
 .badge { padding: 4px 12px; border-radius: 99px; font-size: 13px; background: var(--surface-2); border: 1px solid var(--border); }
 .badge.live { background: rgba(240, 89, 107, 0.15); border-color: var(--short); color: var(--short); }
