@@ -1381,7 +1381,7 @@ async function saveSettings() {
       parsePrivateKey(nbPriv);
     } catch (e) {
       $('settings-msg').innerHTML = `<span class="err">${esc(e.message)}</span>`;
-      return;
+      return false;
     }
   }
   Object.assign(state.settings, readRiskForm(), {
@@ -1417,35 +1417,46 @@ async function saveSettings() {
   $('settings-msg').textContent = 'ذخیره شد ✓';
   setTimeout(() => ($('settings-msg').textContent = ''), 2500);
   refreshBalance();
+  return true;
 }
 
 async function testAi() {
-  await saveSettings();
+  if (!(await saveSettings())) throw new Error($('settings-msg').textContent || 'تنظیمات ذخیره نشد');
   const s = state.settings;
-  try {
-    const r = await askModel(
-      { baseUrl: s.aiBaseUrl, apiKey: state.secrets.aiKey, model: s.aiModel },
-      'Reply only with the JSON object {"ok":true}.',
-      'ping',
-    );
-    toast(r && r.ok ? 'اتصال به هوش مصنوعی برقرار است ✓' : 'پاسخ دریافت شد ولی قالب آن غیرمنتظره بود', !(r && r.ok));
-  } catch (e) {
-    toast(e.message, true);
-  }
+  const r = await askModel(
+    { baseUrl: s.aiBaseUrl, apiKey: state.secrets.aiKey, model: s.aiModel },
+    'Reply only with the JSON object {"ok":true}.',
+    'ping',
+  );
+  toast(r && r.ok ? 'اتصال به هوش مصنوعی برقرار است ✓' : 'پاسخ دریافت شد ولی قالب آن غیرمنتظره بود', !(r && r.ok));
 }
 
 async function testNobitex() {
-  await saveSettings();
+  if (!(await saveSettings())) throw new Error($('settings-msg').textContent || 'تنظیمات ذخیره نشد');
+  await state.api.marketStats();
+  if (!state.api.hasAuth) {
+    toast('اتصال عمومی به نوبیتکس برقرار است. کلید API وارد نشده.');
+    return;
+  }
+  const b = await state.api.marginBalance(dstForQuote());
+  toast(`کلید معتبر است ✓ موجودی تعهدی: ${fmtQuote(b.balance)}`);
+}
+
+async function runButtonAction(id, busyText, action) {
+  const button = $(id);
+  if (button.disabled) return;
+  const text = button.textContent;
+  button.disabled = true;
+  button.textContent = busyText;
+  button.setAttribute('aria-busy', 'true');
   try {
-    await state.api.marketStats();
-    if (!state.api.hasAuth) {
-      toast('اتصال عمومی به نوبیتکس برقرار است. کلید API وارد نشده.');
-      return;
-    }
-    const b = await state.api.marginBalance(dstForQuote());
-    toast(`کلید معتبر است ✓ موجودی تعهدی: ${fmtQuote(b.balance)}`);
+    await action();
   } catch (e) {
-    toast('خطا: ' + e.message, true);
+    toast('خطا: ' + (e && e.message ? e.message : e), true);
+  } finally {
+    button.disabled = false;
+    button.textContent = text;
+    button.removeAttribute('aria-busy');
   }
 }
 
@@ -1507,8 +1518,8 @@ function init() {
   $('analyze-btn').onclick = analyze;
   $('refresh-pos').onclick = renderPositions;
   $('save-settings').onclick = saveSettings;
-  $('test-ai').onclick = testAi;
-  $('test-nb').onclick = testNobitex;
+  $('test-ai').onclick = () => runButtonAction('test-ai', 'در حال آزمایش…', testAi);
+  $('test-nb').onclick = () => runButtonAction('test-nb', 'در حال آزمایش…', testNobitex);
   $('gen-key').onclick = generateKeys;
   $('lock-now').onclick = lockNow;
   $('wipe').onclick = wipe;
