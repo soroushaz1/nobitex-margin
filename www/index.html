@@ -28,7 +28,13 @@
         <div id="balance" class="balance">—</div>
         <div id="balance-sub" class="muted small"></div>
       </div>
-      <span id="mode-badge" class="badge">آزمایشی</span>
+      <div class="top-actions">
+        <div class="seg currency-seg" id="currency-seg" aria-label="بازار تعهدی">
+          <button data-currency="IRT" type="button">IRT · تومان</button>
+          <button data-currency="USDT" type="button">USDT · تتر</button>
+        </div>
+        <span id="mode-badge" class="badge">آزمایشی</span>
+      </div>
     </header>
 
     <!-- Suggestion tab -->
@@ -56,6 +62,15 @@
 
     <!-- Settings tab -->
     <section id="tab-settings" class="tab" hidden>
+      <h2>بازار تعهدی</h2>
+      <div class="card">
+        <p class="muted small">واحد بازار، موجودی، اندازه معامله و پیشنهادها را انتخاب کنید.</p>
+        <div class="seg currency-seg" aria-label="انتخاب بازار تعهدی">
+          <button data-currency="IRT" type="button">IRT · تومان</button>
+          <button data-currency="USDT" type="button">USDT · تتر</button>
+        </div>
+      </div>
+
       <h2>حالت معامله</h2>
       <div class="card">
         <div class="seg" id="mode-seg">
@@ -63,7 +78,10 @@
           <button data-mode="live">پول واقعی</button>
         </div>
         <p class="muted small">در حالت آزمایشی هیچ سفارشی به نوبیتکس ارسال نمی‌شود؛ نتیجه پیشنهادها با قیمت‌های واقعی بازار سنجیده می‌شود.</p>
-        <label>موجودی شروع حالت آزمایشی (تومان)<input id="s-paper" inputmode="numeric" /></label>
+        <div class="two">
+          <label>موجودی آزمایشی IRT (تومان)<input id="s-paper-irt" inputmode="numeric" /></label>
+          <label>موجودی آزمایشی USDT<input id="s-paper-usdt" inputmode="decimal" /></label>
+        </div>
       </div>
 
       <h2>مدیریت ریسک</h2>
