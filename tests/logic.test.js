@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ema, rsi, atr, summarize, candlesFromUdf } from '../www/js/indicators.js';
-import { buildPlan, effectiveSettings, LIMITS } from '../www/js/risk.js';
+import { buildPlan, effectiveSettings, scanRules, LIMITS } from '../www/js/risk.js';
 import { settlePaper, resultOf, stats, tradesToday } from '../www/js/journal.js';
 import { extractJson, normalizeIdea, buildSnapshot, askModel } from '../www/js/ai.js';
 import { MarketInfo } from '../www/js/market.js';
@@ -16,6 +16,30 @@ test('util rounding and digits', () => {
   assert.equal(roundToStep(12345678, 10), '12345680');
   assert.equal(normalizeDigits('۹۹۶٬۰۰۰'), '996000');
   assert.equal(fmtToman(9960000), '۹۹۶,۰۰۰');
+});
+
+test('USDT plan sizing and minimum-order messages use the quote currency', () => {
+  const context = ctx({
+    symbol: 'BTCUSDT',
+    price: 100,
+    balanceRials: 1000,
+    market: { src: 'btc', dst: 'usdt', maxLeverage: 5, buyEnabled: true, sellEnabled: true },
+    amountStep: 0.0001,
+    priceStep: 0.01,
+    minOrderValue: 5,
+    settings: { leverage: 2, riskPct: 2, quoteCurrency: 'USDT' },
+  });
+  const result = buildPlan(idea({ symbol: 'BTCUSDT' }), context);
+  assert.ok(result.ok, result.reasons && result.reasons.join());
+  assert.equal(result.plan.dst, 'usdt');
+  assert.ok(result.plan.notional >= 5);
+
+  const tooSmall = buildPlan(
+    idea({ symbol: 'BTCUSDT' }),
+    { ...context, price: 1, balanceRials: 1, minOrderValue: 5, settings: { leverage: 1 } },
+  );
+  assert.equal(tooSmall.ok, false);
+  assert.match(tooSmall.reasons.join(), /USDT/);
 });
 
 test('indicators: EMA of constant, RSI extremes, ATR positive', () => {
@@ -58,6 +82,7 @@ test('settings are clamped to the adjustable ranges', () => {
   assert.equal(d.maxTradesPerDay, 0, 'default is unlimited');
   assert.equal(d.maxOpenPositions, 3);
   assert.equal(effectiveSettings({ maxTradesPerDay: '' }).maxTradesPerDay, 0);
+  assert.equal(scanRules({ quoteCurrency: 'USDT' }).quoteCurrency, 'USDT');
 });
 
 test('plan sizing: loss at stop ≈ 2% of balance, stop/tp prices on the right side', () => {
@@ -146,12 +171,12 @@ function fakeExchange(state = {}) {
   // Nobitex charts quote IRT markets in toman; the orderbook below is in rials.
   const candles = toUdf(makeCandles(Array.from({ length: 220 }, (_, i) => (10_000_000_000 + i * 5_000_000) / 10)));
   return mockFetch([
-    [(u) => u.includes('/v2/options'), () => ({ body: { status: 'ok', nobitex: { minOrders: { rls: '3000000' }, amountPrecisions: { BTCIRT: '0.000001' }, pricePrecisions: { BTCIRT: '10' } } } })],
+    [(u) => u.includes('/v2/options'), () => ({ body: { status: 'ok', nobitex: { minOrders: { rls: '3000000', usdt: '2' }, amountPrecisions: { BTCIRT: '0.000001', BTCUSDT: '0.000001' }, pricePrecisions: { BTCIRT: '10', BTCUSDT: '0.01' } } } })],
     [(u) => u.includes('/margin/markets/list'), () => ({ body: { status: 'ok', markets: {
       BTCIRT: { srcCurrency: 'btc', dstCurrency: 'rls', maxLeverage: '5', buyEnabled: true, sellEnabled: true },
       ETHIRT: { srcCurrency: 'eth', dstCurrency: 'rls', maxLeverage: '5', buyEnabled: true, sellEnabled: false },
       BTCUSDT: { srcCurrency: 'btc', dstCurrency: 'usdt', maxLeverage: '5', buyEnabled: true, sellEnabled: true } } } })],
-    [(u) => u.includes('/market/stats'), () => ({ body: { status: 'ok', stats: { 'btc-rls': { volumeDst: '900000000000', isClosed: false }, 'eth-rls': { volumeDst: '500000000000', isClosed: false } } } })],
+    [(u) => u.includes('/market/stats'), () => ({ body: { status: 'ok', stats: { 'btc-rls': { volumeDst: '900000000000', isClosed: false }, 'eth-rls': { volumeDst: '500000000000', isClosed: false }, 'btc-usdt': { volumeDst: '10000', isClosed: false }, 'usdt-rls': { latest: '700000' } } } })],
     [(u) => u.includes('/market/udf/history'), () => ({ body: candles })],
     [(u) => u.includes('/v3/orderbook/'), () => ({ body: { status: 'ok', asks: [['11100000000', '1']], bids: [['11090000000', '1']], lastTradePrice: '11095000000' } })],
     [(u) => u.includes('/margin/orders/add'), (u, i) => { state.order = JSON.parse(i.body); state.opened = true; return { body: { status: 'ok', order: { id: 55 } } }; }],
@@ -160,13 +185,18 @@ function fakeExchange(state = {}) {
   ]);
 }
 
-test('market discovery keeps only rial margin markets, ranked by volume', async () => {
+test('market discovery filters by quote currency and converts USDT volume for ranking', async () => {
   const { Nobitex } = await import('../www/js/nobitex.js');
   const api = new Nobitex({ fetchFn: fakeExchange() });
   const mi = await new MarketInfo(api).load();
   const c = mi.candidates(5);
   assert.deepEqual(c.map((x) => x.symbol), ['BTCIRT', 'ETHIRT']);
   assert.equal(mi.precision('BTCIRT').minOrderRials, 3_000_000);
+  const usdt = mi.candidates(5, undefined, 'USDT');
+  assert.deepEqual(usdt.map((x) => x.symbol), ['BTCUSDT']);
+  assert.equal(usdt[0].dst, 'usdt');
+  assert.equal(mi.precision('BTCUSDT').minOrderValue, 2);
+  assert.equal(mi.precision('BTCUSDT').priceStep, 0.01);
   const snap = await buildSnapshot(api, c);
   assert.equal(snap.length, 2);
   assert.ok(snap[0].timeframes['1h'].rsi14 > 50);

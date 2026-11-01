@@ -9,7 +9,7 @@ const file = buildRunner();
 const code = readFileSync(file, 'utf8');
 
 /** Sandbox with only the APIs the Capacitor background runner provides. */
-function makeRunner({ aiDecision = 'trade', confidence = 66, spread = 0.1, aiFails = false } = {}) {
+function makeRunner({ aiDecision = 'trade', confidence = 66, spread = 0.1, aiFails = false, quoteCurrency = 'IRT' } = {}) {
   const kv = new Map();
   const notifications = [];
   const listeners = {};
@@ -27,14 +27,16 @@ function makeRunner({ aiDecision = 'trade', confidence = 66, spread = 0.1, aiFai
     if (url.includes('/margin/markets/list'))
       return respond({ status: 'ok', markets: {
         BTCIRT: { srcCurrency: 'btc', dstCurrency: 'rls', maxLeverage: '5', buyEnabled: true, sellEnabled: true },
+        BTCUSDT: { srcCurrency: 'btc', dstCurrency: 'usdt', maxLeverage: '5', buyEnabled: true, sellEnabled: true },
         ETHIRT: { srcCurrency: 'eth', dstCurrency: 'rls', maxLeverage: '5', buyEnabled: true, sellEnabled: true },
         PEPEIRT: { srcCurrency: 'pepe', dstCurrency: 'rls', maxLeverage: '3', buyEnabled: true, sellEnabled: true } } });
     if (url.includes('/market/stats'))
       return respond({ status: 'ok', stats: {
-        'btc-rls': { volumeDst: '900000000000' }, 'eth-rls': { volumeDst: '300000000000' }, 'pepe-rls': { volumeDst: '2000000000' } } });
+        'btc-rls': { volumeDst: '900000000000' }, 'btc-usdt': { volumeDst: '10000' }, 'usdt-rls': { latest: '700000' },
+        'eth-rls': { volumeDst: '300000000000' }, 'pepe-rls': { volumeDst: '2000000000' } } });
     if (url.includes('/v3/orderbook/all')) {
       const mk = (p) => ({ asks: [[String(p * (1 + spread / 200)), '1']], bids: [[String(p * (1 - spread / 200)), '1']] });
-      return respond({ status: 'ok', BTCIRT: mk(1e10), ETHIRT: mk(4e8) });
+      return respond({ status: 'ok', BTCIRT: mk(1e10), BTCUSDT: mk(70000), ETHIRT: mk(4e8) });
     }
     if (url.includes('/market/udf/history')) return respond(candles);
     if (url.includes('ai.test')) {
@@ -42,7 +44,7 @@ function makeRunner({ aiDecision = 'trade', confidence = 66, spread = 0.1, aiFai
       const body = JSON.parse(opts.body);
       assert.ok(!body.messages[1].content.includes('PEPEIRT'), 'thin market must be filtered out');
       return respond({ choices: [{ message: { content: JSON.stringify({
-        decision: aiDecision, symbol: 'BTCIRT', side: 'long', stop_loss_pct: 1.4, take_profit_pct: 3, confidence, reasoning_fa: 'x' }) } }] });
+        decision: aiDecision, symbol: quoteCurrency === 'USDT' ? 'BTCUSDT' : 'BTCIRT', side: 'long', stop_loss_pct: 1.4, take_profit_pct: 3, confidence, reasoning_fa: 'x' }) } }] });
     }
     return respond({ status: 'failed', message: 'unknown ' + url }, 404);
   };
@@ -92,6 +94,15 @@ test('valid setup → one notification, stored finding; same idea is not re-noti
   await r.dispatch('checkMarket');
   assert.equal(r.notifications.length, 1, 'repeat idea within 2h must be silent');
   assert.ok(!r.calls.some((u) => u.includes('/positions') || u.includes('/orders')), 'background must never touch account endpoints');
+});
+
+test('background scanner honors the selected USDT market', async () => {
+  const r = makeRunner({ quoteCurrency: 'USDT' });
+  await r.dispatch('configure', { ...CFG, rules: { quoteCurrency: 'USDT' } });
+  await r.dispatch('checkMarket');
+  assert.equal(r.notifications.length, 1);
+  assert.match(r.notifications[0].title, /BTCUSDT/);
+  assert.ok(r.calls.some((url) => url.includes('symbol=BTCUSDT')));
 });
 
 test('no notification for no_trade, low confidence or wide spread', async () => {
