@@ -57,8 +57,10 @@ export async function buildSnapshot(api, candidates, spreadMap = {}, onProgress 
 export function systemPrompt(rules = {}) {
   const minRR = rules.minRewardRisk ?? RULES.minRewardRisk[2];
   const maxSpread = rules.maxSpreadPct ?? RULES.maxSpreadPct[2];
+  const quote = rules.quoteCurrency === 'USDT' ? 'USDT-quoted' : 'rial/toman';
+  const exampleSymbol = rules.quoteCurrency === 'USDT' ? 'BTCUSDT' : 'BTCIRT';
   return [
-    'You are a crypto margin-trading analyst for a small retail account on the Iranian exchange Nobitex (rial/toman markets).',
+    `You are a crypto margin-trading analyst for a small retail account on the Iranian exchange Nobitex (${quote} markets).`,
     'You receive indicator summaries (percent-based, computed from real candles) for liquid markets on 15m, 1h and 4h timeframes.',
     'Task: find the single BEST trade setup (long or short) for the next few hours to ~2 days among these markets.',
     'Rules:',
@@ -73,7 +75,7 @@ export function systemPrompt(rules = {}) {
     '- Percentages are distances from the current price.',
     '- confidence is 0-100 and must be calibrated: it is the probability you assign to hitting the target before the stop.',
     'Answer ONLY with a JSON object, no markdown:',
-    '{"decision":"trade"|"no_trade","symbol":"BTCIRT","side":"long"|"short","stop_loss_pct":1.5,"take_profit_pct":3.0,"confidence":62,"holding_hours":24,',
+    `{"decision":"trade"|"no_trade","symbol":"${exampleSymbol}","side":"long"|"short","stop_loss_pct":1.5,"take_profit_pct":3.0,"confidence":62,"holding_hours":24,`,
     '"reasoning_fa":"2-4 short sentences in Persian explaining the setup","risks_fa":"1-2 short sentences in Persian on what would invalidate it",',
     '"market_view_fa":"one Persian sentence about the overall market"}',
     'For no_trade, still fill reasoning_fa and market_view_fa.',
@@ -171,8 +173,14 @@ export async function runAnalysis(api, market, ai, n, onProgress = () => {}, rul
   onProgress('markets');
   await market.load();
   const exclude = new Set((rules.exclude || []).map((x) => String(x).toUpperCase()));
-  const cands = market.candidates(n + exclude.size, rules.minVolumeRials).filter((c) => !exclude.has(c.symbol)).slice(0, n);
-  if (!cands.length) throw new Error('بازار تعهدی فعالی با حجم کافی پیدا نشد (حداقل حجم را در تنظیمات کم کنید)');
+  const cands = market
+    .candidates(n + exclude.size, rules.minVolumeRials, rules.quoteCurrency)
+    .filter((c) => !exclude.has(c.symbol))
+    .slice(0, n);
+  if (!cands.length) {
+    const quote = rules.quoteCurrency === 'USDT' ? 'USDT' : 'IRT';
+    throw new Error(`بازار تعهدی ${quote} فعالی با حجم کافی پیدا نشد (حداقل حجم را در تنظیمات کم کنید)`);
+  }
   const sp = await spreads(api);
   const snapshot = await buildSnapshot(api, cands, sp, (i, total) => onProgress('candles', i, total));
   if (!snapshot.length) throw new Error('داده کندل دریافت نشد');
