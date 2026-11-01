@@ -39,12 +39,17 @@ if (!savedSettings.v || savedSettings.v < 3) {
 const state = {
   pin: null,
   secrets: {},
-  settings: { ...DEFAULT_SETTINGS, ...savedSettings },
+  settings: {
+    ...DEFAULT_SETTINGS,
+    ...savedSettings,
+    quoteCurrency: savedSettings.quoteCurrency === 'USDT' ? 'USDT' : 'IRT',
+  },
   journal: store.get('journal', []),
   api: null,
   market: null,
   current: null, // { idea, plan, reasons, createdAt, source, status, price, spreadPct }
   busy: false,
+  balanceRefreshId: 0,
   hiddenAt: 0,
   lastBalance: null,
 };
@@ -132,9 +137,29 @@ function minutesAgo(ms) {
   return `${toFaDigits(Math.floor(m / 60))} ساعت و ${toFaDigits(m % 60)} دقیقه پیش`;
 }
 
-function signedToman(rials) {
-  if (!isFinite(rials)) return '—';
-  return (rials >= 0 ? '+' : '−') + fmtToman(Math.abs(rials));
+function activeQuote() {
+  return state.settings.quoteCurrency === 'USDT' ? 'USDT' : 'IRT';
+}
+
+function dstForQuote(quote = activeQuote()) {
+  return quote === 'USDT' ? 'usdt' : 'rls';
+}
+
+function quoteForSymbol(symbol) {
+  return /USDT$/i.test(String(symbol)) ? 'USDT' : 'IRT';
+}
+
+function quoteForRecord(record) {
+  return record.dst ? (String(record.dst).toLowerCase() === 'usdt' ? 'USDT' : 'IRT') : quoteForSymbol(record.symbol);
+}
+
+function fmtQuote(value, quote = activeQuote(), maxFrac = 4) {
+  return quote === 'USDT' ? `${fmtNum(value, maxFrac)} USDT` : `${fmtToman(value)} تومان`;
+}
+
+function signedQuote(value, quote = activeQuote()) {
+  if (!isFinite(value)) return '—';
+  return `${value >= 0 ? '+' : '−'}${fmtQuote(Math.abs(value), quote)}`;
 }
 
 function makeApi() {
@@ -152,25 +177,35 @@ async function ensureMarket() {
   if (!state.market.markets || !state.market.options) await state.market.load();
 }
 
-function paperOpen() {
-  return state.journal.filter((e) => e.mode === 'paper' && e.status === 'open');
+function paperOpen(quote = null) {
+  return state.journal.filter(
+    (e) => e.mode === 'paper' && e.status === 'open' && (!quote || quoteForRecord(e) === quote),
+  );
 }
 
-function paperBalanceRials() {
-  const start = Number(state.settings.paperBalanceToman || 0) * 10;
-  const closed = state.journal.filter((e) => e.mode === 'paper' && ['won', 'lost', 'expired', 'closed'].includes(e.status));
+function paperBalance(quote = activeQuote()) {
+  const start =
+    quote === 'USDT'
+      ? Number(state.settings.paperBalanceUsdt || 0)
+      : Number(state.settings.paperBalanceToman || 0) * 10;
+  const closed = state.journal.filter(
+    (e) =>
+      e.mode === 'paper' &&
+      quoteForRecord(e) === quote &&
+      ['won', 'lost', 'expired', 'closed'].includes(e.status),
+  );
   const realized = closed.reduce((s, e) => s + resultOf(e).pnl, 0);
-  const locked = paperOpen().reduce((s, e) => s + (Number(e.collateral) || 0), 0);
+  const locked = paperOpen(quote).reduce((s, e) => s + (Number(e.collateral) || 0), 0);
   return { total: start + realized, free: start + realized - locked, locked };
 }
 
-/** { free, equity } in rials: free = usable for new collateral; equity = whole margin account. */
+/** { free, equity } in the selected quote currency. */
 async function balances() {
   if (!isLive()) {
-    const b = paperBalanceRials();
+    const b = paperBalance();
     return { free: b.free, equity: b.total };
   }
-  const b = await state.api.marginBalanceRials();
+  const b = await state.api.marginBalance(dstForQuote());
   return { free: b.balance - (b.blocked || 0), equity: b.balance };
 }
 
@@ -179,29 +214,36 @@ async function freeBalanceRials() {
 }
 
 async function refreshBalance() {
+  const requestId = ++state.balanceRefreshId;
+  const quote = activeQuote();
+  const live = isLive();
   const badge = $('mode-badge');
-  badge.textContent = isLive() ? 'پول واقعی' : 'آزمایشی';
-  badge.className = 'badge ' + (isLive() ? 'live' : 'paper');
+  badge.textContent = live ? 'پول واقعی' : 'آزمایشی';
+  badge.className = 'badge ' + (live ? 'live' : 'paper');
   try {
-    if (isLive()) {
-      const b = await state.api.marginBalanceRials();
+    if (live) {
+      const b = await state.api.marginBalance(dstForQuote(quote));
+      if (requestId !== state.balanceRefreshId) return;
       const free = b.balance - (b.blocked || 0);
       state.lastBalance = free;
       state.lastEquity = b.balance;
-      $('balance').textContent = fmtToman(free) + ' تومان';
-      $('balance-sub').textContent = b.blocked > 0 ? `در سفارش‌ها/پوزیشن‌ها: ${fmtToman(b.blocked)} تومان` : '';
+      $('balance').textContent = fmtQuote(free, quote);
+      $('balance-sub').textContent = b.blocked > 0 ? `در سفارش‌ها/پوزیشن‌ها: ${fmtQuote(b.blocked, quote)}` : '';
     } else {
-      const b = paperBalanceRials();
+      const b = paperBalance(quote);
+      if (requestId !== state.balanceRefreshId) return;
       state.lastBalance = b.free;
       state.lastEquity = b.total;
-      $('balance').textContent = fmtToman(b.free) + ' تومان';
-      $('balance-sub').textContent = b.locked > 0 ? `وثیقه پوزیشن‌های آزمایشی: ${fmtToman(b.locked)} تومان` : '';
+      $('balance').textContent = fmtQuote(b.free, quote);
+      $('balance-sub').textContent = b.locked > 0 ? `وثیقه پوزیشن‌های آزمایشی: ${fmtQuote(b.locked, quote)}` : '';
     }
   } catch (e) {
+    if (requestId !== state.balanceRefreshId) return;
     $('balance').textContent = '—';
     $('balance-sub').textContent = '';
-    if (isLive()) toast('موجودی دریافت نشد: ' + e.message, true);
+    if (live) toast('موجودی دریافت نشد: ' + e.message, true);
   }
+  if (requestId !== state.balanceRefreshId) return;
   renderRiskPreview();
 }
 
@@ -293,7 +335,7 @@ async function checkBackgroundFinding() {
   try {
     const r = await bgDispatch('getLatest');
     const f = r && r.latest;
-    if (!f || !f.idea || f.idea.decision !== 'trade' || !f.price) return false;
+    if (!f || !f.idea || f.idea.decision !== 'trade' || !f.price || quoteForSymbol(f.idea.symbol) !== activeQuote()) return false;
     if (Date.now() - f.at > BG_FINDING_TTL_MS) return false;
     if (state.settings.bgSeenAt && f.at <= state.settings.bgSeenAt) return false;
     state.settings.bgSeenAt = f.at;
@@ -453,6 +495,31 @@ async function onUnlocked() {
   checkBackgroundFinding();
 }
 
+function renderCurrencySeg() {
+  document.querySelectorAll('#currency-seg button').forEach((button) => {
+    button.classList.toggle('on', button.dataset.currency === activeQuote());
+    button.setAttribute('aria-pressed', String(button.dataset.currency === activeQuote()));
+  });
+}
+
+function setQuoteCurrency(quote) {
+  if (state.busy) {
+    toast('تا پایان عملیات جاری امکان تغییر بازار نیست', true);
+    return;
+  }
+  if (quote !== 'IRT' && quote !== 'USDT') return;
+  if (quote === activeQuote()) return;
+  state.settings.quoteCurrency = quote;
+  saveSettingsOnly();
+  state.current = null;
+  renderCurrencySeg();
+  renderSuggestion();
+  renderRiskPreview();
+  refreshBalance();
+  if (!$('tab-journal').hidden) renderJournal();
+  syncBgConfig();
+}
+
 function lockNow() {
   state.pin = null;
   state.secrets = {};
@@ -567,18 +634,19 @@ async function planFor(idea, price, spreadPct) {
 }
 
 function planGrid(p) {
+  const quote = p.dst === 'usdt' ? 'USDT' : 'IRT';
   return `
     <div class="grid">
       <div><span>جهت</span><span class="${p.side === 'long' ? 'pos' : 'neg'}">${p.side === 'long' ? 'لانگ (خرید)' : 'شورت (فروش)'}</span></div>
       <div><span>اهرم</span><span>${toFaDigits(p.leverage)}x</span></div>
-      <div><span>قیمت ورود (تقریبی)</span><span>${fmtToman(p.price)}</span></div>
+      <div><span>قیمت ورود (تقریبی)</span><span>${fmtQuote(p.price, quote)}</span></div>
       <div><span>حجم</span><span dir="ltr">${fmtNum(p.amount, 8)} ${esc((p.src || '').toUpperCase())}</span></div>
-      <div><span>حد ضرر</span><span class="neg">${fmtToman(p.stopPrice)} <small>(${fmtPct(p.stopPct, 1)})</small></span></div>
-      <div><span>حد سود</span><span class="pos">${fmtToman(p.tpPrice)} <small>(${fmtPct(p.tpPct, 1)})</small></span></div>
-      <div><span>ارزش پوزیشن</span><span>${fmtToman(p.notional)} ت</span></div>
-      <div><span>وثیقه</span><span>${fmtToman(p.collateral)} ت</span></div>
-      <div><span>ضرر در صورت حد ضرر</span><span class="neg">−${fmtToman(p.lossAtStop)} ت</span></div>
-      <div><span>سود در صورت حد سود</span><span class="pos">+${fmtToman(p.gainAtTp)} ت</span></div>
+      <div><span>حد ضرر</span><span class="neg">${fmtQuote(p.stopPrice, quote)} <small>(${fmtPct(p.stopPct, 1)})</small></span></div>
+      <div><span>حد سود</span><span class="pos">${fmtQuote(p.tpPrice, quote)} <small>(${fmtPct(p.tpPct, 1)})</small></span></div>
+      <div><span>ارزش پوزیشن</span><span>${fmtQuote(p.notional, quote)}</span></div>
+      <div><span>وثیقه</span><span>${fmtQuote(p.collateral, quote)}</span></div>
+      <div><span>ضرر در صورت حد ضرر</span><span class="neg">−${fmtQuote(p.lossAtStop, quote)}</span></div>
+      <div><span>سود در صورت حد سود</span><span class="pos">+${fmtQuote(p.gainAtTp, quote)}</span></div>
     </div>`;
 }
 
@@ -588,7 +656,7 @@ function renderSuggestion() {
   if (!c) {
     box.innerHTML = state.busy
       ? ''
-      : `<div class="card muted small">با زدن «تحلیل بازار»، برنامه بازارهای تعهدی ریالی را بررسی می‌کند و بهترین فرصت را پیشنهاد می‌دهد. هیچ سفارشی بدون تایید شما ثبت نمی‌شود.</div>`;
+      : `<div class="card muted small">با زدن «تحلیل بازار»، برنامه بازارهای تعهدی ${activeQuote()} را بررسی می‌کند و بهترین فرصت را پیشنهاد می‌دهد. هیچ سفارشی بدون تایید شما ثبت نمی‌شود.</div>`;
     return;
   }
   const i = c.idea;
@@ -797,9 +865,9 @@ async function settlePaperTrades() {
 }
 
 // ---------------------------------------------------------------- positions
-function pnlBlock(pnl) {
+function pnlBlock(pnl, quote = activeQuote()) {
   if (!pnl) return '';
-  return `<div class="pnl-big ${pnl.pnl >= 0 ? 'pos' : 'neg'}">${signedToman(pnl.pnl)} تومان ${
+  return `<div class="pnl-big ${pnl.pnl >= 0 ? 'pos' : 'neg'}">${signedQuote(pnl.pnl, quote)} ${
     pnl.pct !== null && isFinite(pnl.pct) ? `<small>(${pnl.pct >= 0 ? '+' : '−'}${fmtPct(Math.abs(pnl.pct), 1)})</small>` : ''
   }</div>`;
 }
@@ -839,6 +907,7 @@ async function renderPositions() {
       .map((p) => {
         const side = positionSide(p);
         const symbol = positionSymbol(p);
+        const quote = String(p.dstCurrency || 'rls').toLowerCase() === 'usdt' ? 'USDT' : 'IRT';
         const entry = state.journal.find((e) => e.mode === 'live' && e.positionId === p.id);
         const prec = state.market.precision(symbol);
         const best = books[symbol];
@@ -846,27 +915,27 @@ async function renderPositions() {
         const amount = positionAmounts(p, entry && entry.amount, prec.amountStep)[0];
         const cur = best ? (side === 'long' ? best.bid : best.ask) : null;
         const rows = [
-          ['قیمت ورود', p.entryPrice ? fmtToman(p.entryPrice) : '—'],
-          ['قیمت فعلی', cur ? fmtToman(cur) : '—'],
-          ['قیمت لیکوئید', p.liquidationPrice ? `<span class="neg">${fmtToman(p.liquidationPrice)}</span>` : '—'],
-          ['وثیقه', p.collateral ? fmtToman(p.collateral) + ' ت' : '—'],
+          ['قیمت ورود', p.entryPrice ? fmtQuote(p.entryPrice, quote) : '—'],
+          ['قیمت فعلی', cur ? fmtQuote(cur, quote) : '—'],
+          ['قیمت لیکوئید', p.liquidationPrice ? `<span class="neg">${fmtQuote(p.liquidationPrice, quote)}</span>` : '—'],
+          ['وثیقه', p.collateral ? fmtQuote(p.collateral, quote) : '—'],
           ['حجم', amount ? `<span dir="ltr">${fmtNum(amount, 8)} ${esc(String(p.srcCurrency || '').toUpperCase())}</span>` : '—'],
           ['اهرم', p.leverage ? toFaDigits(p.leverage) + 'x' : entry ? toFaDigits(entry.leverage) + 'x' : '—'],
         ];
         if (entry && entry.stopPrice) {
-          rows.push(['حد ضرر', `<span class="neg">${fmtToman(entry.stopPrice)}</span>`]);
-          rows.push(['حد سود', `<span class="pos">${fmtToman(entry.tpPrice)}</span>`]);
+          rows.push(['حد ضرر', `<span class="neg">${fmtQuote(entry.stopPrice, quote)}</span>`]);
+          rows.push(['حد سود', `<span class="pos">${fmtQuote(entry.tpPrice, quote)}</span>`]);
         }
         const unprotected = !entry || entry.protectedOk === false;
         return `<div class="card">
           <div class="sugg-head"><span class="sym" dir="ltr">${esc(symbol)}</span>
           ${side ? `<span class="side ${side}">${sideFa(side)}</span>` : ''}</div>
-          ${pnlBlock(pnl)}
+          ${pnlBlock(pnl, quote)}
           <div class="grid">${rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join('')}</div>
           ${
-            amount && cur && Number(amount) * cur < (prec.minOrderRials || 3_000_000)
-              ? `<div class="note warn small">از این پوزیشن فقط مقدار ناچیزی (${esc(amount)}، حدود ${fmtToman(Number(amount) * cur)} تومان) مانده، ولی وثیقه‌اش${
-                  p.collateral ? ` (${fmtToman(p.collateral)} تومان)` : ''
+            amount && cur && Number(amount) * cur < (prec.minOrderValue || prec.minOrderRials || 3_000_000)
+              ? `<div class="note warn small">از این پوزیشن فقط مقدار ناچیزی (${esc(amount)}، حدود ${fmtQuote(Number(amount) * cur, quote)}) مانده، ولی وثیقه‌اش${
+                  p.collateral ? ` (${fmtQuote(p.collateral, quote)})` : ''
                 } تا بسته شدن کامل قفل است. «بستن فوری» را بزنید.</div>`
               : ''
           }
@@ -912,7 +981,7 @@ async function renderPaperPositions(box) {
           }
           return `<div class="card">
             <div class="sugg-head"><span class="sym" dir="ltr">${esc(e.symbol)}</span><span class="side ${e.side}">${sideFa(e.side)}</span></div>
-            ${pnlBlock(pnl)}
+            ${pnlBlock(pnl, quoteForRecord(e))}
             ${planGrid(e)}
             <div class="btn-row"><button class="btn ghost" data-close-paper="${esc(e.id)}">بستن با قیمت فعلی</button></div>
           </div>`;
@@ -1062,6 +1131,7 @@ async function showDebug(p) {
 async function editProtection(p, books) {
   if (!p) return;
   const symbol = positionSymbol(p);
+  const quote = String(p.dstCurrency || 'rls').toLowerCase() === 'usdt' ? 'USDT' : 'IRT';
   const side = positionSide(p) || 'long';
   const entry = state.journal.find((e) => e.mode === 'live' && e.positionId === p.id);
   await ensureMarket().catch(() => {});
@@ -1082,7 +1152,7 @@ async function editProtection(p, books) {
   let prices = null;
   const ok = await modal(
     `<h2 style="margin-top:0;color:var(--text)">حد سود و ضرر ${esc(symbol)} <span class="side ${side}" style="font-size:13px">${sideFa(side)}</span></h2>
-     <p class="small muted">فاصله‌ها نسبت به قیمت فعلی (${fmtToman(ref)} تومان) است.</p>
+     <p class="small muted">فاصله‌ها نسبت به قیمت فعلی (${fmtQuote(ref, quote)}) است.</p>
      <div class="inline-inputs">
        <label>حد ضرر ٪<input id="pe-sl" type="number" step="0.1" min="${FIXED.MIN_STOP_PCT}" max="${FIXED.MAX_STOP_PCT}" inputmode="decimal" value="${defSl.toFixed(1)}" /></label>
        <label>حد سود ٪<input id="pe-tp" type="number" step="0.1" min="0.3" max="50" inputmode="decimal" value="${defTp.toFixed(1)}" /></label>
@@ -1098,9 +1168,9 @@ async function editProtection(p, books) {
           prices = valid ? protectionPrices(side, ref, sl, tp, prec.priceStep) : null;
           okBtn.disabled = !valid;
           $('pe-preview').innerHTML = valid
-            ? `حد ضرر: <b class="neg">${fmtToman(prices.stopPrice)}</b> · حد سود: <b class="pos">${fmtToman(prices.tpPrice)}</b>${
+            ? `حد ضرر: <b class="neg">${fmtQuote(prices.stopPrice, quote)}</b> · حد سود: <b class="pos">${fmtQuote(prices.tpPrice, quote)}</b>${
                 p.liquidationPrice
-                  ? `<br>قیمت لیکوئید: ${fmtToman(p.liquidationPrice)}${
+                  ? `<br>قیمت لیکوئید: ${fmtQuote(p.liquidationPrice, quote)}${
                       (side === 'long' && prices.stopPrice <= Number(p.liquidationPrice)) ||
                       (side === 'short' && prices.stopPrice >= Number(p.liquidationPrice))
                         ? ' — <b class="neg">حد ضرر بعد از لیکوئید است!</b>'
@@ -1129,6 +1199,7 @@ async function editProtection(p, books) {
       id: 'x' + Date.now(),
       mode: 'live',
       source: 'external',
+      dst: String(p.dstCurrency || 'rls').toLowerCase(),
       createdAt: Date.now(),
       openedAt: Number(p.openedAt ? Date.parse(p.openedAt) : Date.now()) || Date.now(),
       symbol,
@@ -1159,12 +1230,13 @@ const STATUS_FA = {
 
 function renderJournal() {
   const mode = state.settings.mode;
-  const list = state.journal.filter((e) => e.mode === mode && STATUS_FA[e.status]);
+  const quote = activeQuote();
+  const list = state.journal.filter((e) => e.mode === mode && quoteForRecord(e) === quote && STATUS_FA[e.status]);
   const st = stats(list);
   $('stats').innerHTML = `
     <div class="stat"><b>${toFaDigits(st.count)}</b><span>معامله بسته</span></div>
     <div class="stat"><b>${st.count ? fmtPct(st.winRate, 0) : '—'}</b><span>درصد موفق</span></div>
-    <div class="stat"><b class="${st.pnl >= 0 ? 'pos' : 'neg'}">${signedToman(st.pnl)}</b><span>سود/زیان (ت)</span></div>`;
+    <div class="stat"><b class="${st.pnl >= 0 ? 'pos' : 'neg'}">${signedQuote(st.pnl, quote)}</b><span>سود/زیان (${quote})</span></div>`;
   if (!list.length) {
     $('journal').innerHTML = `<div class="card muted small">هنوز معامله‌ای در حالت ${mode === 'live' ? 'واقعی' : 'آزمایشی'} ثبت نشده.</div>`;
     return;
@@ -1190,7 +1262,7 @@ function renderJournal() {
           }<div class="small muted">${esc(date)}</div></div>
           <div style="text-align:left">
             <span class="tag ${e.status}">${STATUS_FA[e.status]}</span>
-            ${showPnl ? `<div class="small ${r.pnl >= 0 ? 'pos' : 'neg'}">${signedToman(r.pnl)} ت</div>` : ''}
+            ${showPnl ? `<div class="small ${r.pnl >= 0 ? 'pos' : 'neg'}">${signedQuote(r.pnl, quote)}</div>` : ''}
           </div>
         </div>`;
       })
@@ -1211,7 +1283,7 @@ const RISK_FIELDS = [
 ];
 
 function readRiskForm() {
-  const raw = { sizing: $('s-sizing').value };
+  const raw = { sizing: $('s-sizing').value, quoteCurrency: activeQuote() };
   for (const [id, key] of RISK_FIELDS) raw[key] = normalizeDigits($(id).value);
   return effectiveSettings(raw);
 }
@@ -1228,21 +1300,23 @@ function renderRiskPreview() {
   if (e.sizing === 'equal') {
     const coll = eq ? eq / e.maxOpenPositions : null;
     const pos = coll ? coll * e.leverage : null;
-    el.innerHTML = `هر معامله: وثیقه <b>${coll ? fmtToman(coll) + ' تومان' : 'کل سرمایه ÷ ' + toFaDigits(e.maxOpenPositions)}</b>${
-      pos ? ` (ارزش پوزیشن ≈ ${fmtToman(pos)} تومان؛ با حد ضرر ۱٫۵٪ ضرر ≈ ${fmtToman(pos * 0.0185)} تومان، با ۴٪ ≈ ${fmtToman(pos * 0.0435)} تومان)` : ''
+    el.innerHTML = `هر معامله: وثیقه <b>${coll ? fmtQuote(coll) : 'کل سرمایه ÷ ' + toFaDigits(e.maxOpenPositions)}</b>${
+      pos ? ` (ارزش پوزیشن ≈ ${fmtQuote(pos)}؛ با حد ضرر ۱٫۵٪ ضرر ≈ ${fmtQuote(pos * 0.0185)}، با ۴٪ ≈ ${fmtQuote(pos * 0.0435)})` : ''
     }. ضرر هر معامله به فاصله حد ضرر بستگی دارد${tail}`;
   } else {
     const per = eq ? (eq * e.riskPct) / 100 : null;
     el.innerHTML = `هر معامله در صورت خوردن حد ضرر حدود <b>${fmtPct(e.riskPct, 1)}</b> کل سرمایه${
-      per ? ` (≈ ${fmtToman(per)} تومان)` : ''
-    } ضرر می‌دهد${per && e.maxOpenPositions > 1 ? ` (بدترین حالت هم‌زمان ≈ ${fmtToman(per * e.maxOpenPositions)} تومان)` : ''}${tail}`;
+      per ? ` (≈ ${fmtQuote(per)})` : ''
+    } ضرر می‌دهد${per && e.maxOpenPositions > 1 ? ` (بدترین حالت هم‌زمان ≈ ${fmtQuote(per * e.maxOpenPositions)})` : ''}${tail}`;
   }
 }
 
 function fillSettingsForm() {
   const s = state.settings;
   const eff = effectiveSettings(s);
-  $('s-paper').value = s.paperBalanceToman;
+  renderCurrencySeg();
+  $('s-paper-irt').value = s.paperBalanceToman;
+  $('s-paper-usdt').value = s.paperBalanceUsdt;
   for (const [id, key] of RISK_FIELDS) $(id).value = eff[key];
   $('s-sizing').value = eff.sizing;
   $('s-ai-url').value = s.aiBaseUrl || '';
@@ -1295,7 +1369,9 @@ async function saveSettings() {
     }
   }
   Object.assign(state.settings, readRiskForm(), {
-    paperBalanceToman: num('s-paper') || DEFAULT_SETTINGS.paperBalanceToman,
+    quoteCurrency: activeQuote(),
+    paperBalanceToman: num('s-paper-irt') || DEFAULT_SETTINGS.paperBalanceToman,
+    paperBalanceUsdt: num('s-paper-usdt') || DEFAULT_SETTINGS.paperBalanceUsdt,
     aiBaseUrl: $('s-ai-url').value.trim(),
     aiModel: $('s-ai-model').value.trim(),
     candidates: Math.min(20, Math.max(3, Math.round(num('s-cands')) || 10)),
@@ -1341,8 +1417,8 @@ async function testNobitex() {
       toast('اتصال عمومی به نوبیتکس برقرار است. کلید API وارد نشده.');
       return;
     }
-    const b = await state.api.marginBalanceRials();
-    toast(`کلید معتبر است ✓ موجودی تعهدی: ${fmtToman(b.balance)} تومان`);
+    const b = await state.api.marginBalance(dstForQuote());
+    toast(`کلید معتبر است ✓ موجودی تعهدی: ${fmtQuote(b.balance)}`);
   } catch (e) {
     toast('خطا: ' + e.message, true);
   }
@@ -1401,6 +1477,7 @@ function init() {
   $('pin').addEventListener('keydown', (e) => e.key === 'Enter' && ($('pin2').hidden ? submitPin() : $('pin2').focus()));
   $('pin2').addEventListener('keydown', (e) => e.key === 'Enter' && submitPin());
   document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+  document.querySelectorAll('#currency-seg button').forEach((b) => (b.onclick = () => setQuoteCurrency(b.dataset.currency)));
   document.querySelectorAll('#mode-seg button').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
   $('analyze-btn').onclick = analyze;
   $('refresh-pos').onclick = renderPositions;
